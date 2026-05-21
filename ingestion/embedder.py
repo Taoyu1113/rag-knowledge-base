@@ -2,7 +2,7 @@ import dashscope
 from dashscope import TextEmbedding
 
 
-dashscope.api_key = "你的API_KEY"
+dashscope.api_key = "sk-f06b8ed05f264e6c83aa0df48d1bbb30"
 
 
 def get_embedding(text: str):

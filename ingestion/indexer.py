@@ -1,12 +1,10 @@
 import chromadb
-from chromadb.config import Settings
 
 from ingestion.embedder import get_embedding
 
-
-client = chromadb.Client(Settings(
-    persist_directory="database/chroma_store"
-))
+client = chromadb.PersistentClient(
+    path="database/chroma_store"
+)
 
 collection = client.get_or_create_collection(name="rag_db")
 
@@ -20,5 +18,5 @@ def index_chunks(chunks):
             embeddings=[embedding],
             ids=[str(i)]
         )
+    print("入库完成")
 
-    client.persist()
