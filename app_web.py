@@ -718,4 +718,4 @@ with gr.Blocks(title="大学课程学习助手") as demo:
 
 if __name__ == "__main__":
     demo.queue(default_concurrency_limit=10)
-    demo.launch()
+    demo.launch(ssr_mode=False)

@@ -66,7 +66,7 @@ def list_courses():
     result = collection.get(include=["metadatas"])
     courses = set()
     for meta in result["metadatas"]:
-        if "course" in meta:
+        if meta and "course" in meta:
             courses.add(meta["course"])
     return sorted(courses)
 
@@ -75,6 +75,8 @@ def get_course_stats():
     result = collection.get(include=["metadatas"])
     stats = {}
     for meta in result["metadatas"]:
+        if not meta:
+            continue
         course = meta.get("course", "默认")
         stats[course] = stats.get(course, 0) + 1
     return stats

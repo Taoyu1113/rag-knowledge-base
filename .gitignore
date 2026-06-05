@@ -6,3 +6,5 @@ __pycache__/
 .claude/
 .gitignore.local
 rag-learning-assistant/
+.env
+database/
