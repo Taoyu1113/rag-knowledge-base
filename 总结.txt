@@ -1,0 +1,438 @@
+# 项目状态报告（Project Status Report）
+
+> 分析日期: 2026-06-01
+> 分析范围: e:\echo\rag-knowledge-base 全部源代码
+> 分析方法: 逐一阅读所有 .py 文件，基于代码实际实现情况总结
+
+---
+
+# 1. 项目定位
+
+* **项目名称**: 个人学习知识库 (Personal Learning Knowledge Base)
+* **项目目标**: 构建一个基于 RAG（Retrieval-Augmented Generation）的个人学习助手，支持上传 PDF 教材/课件，通过语义检索 + LLM 生成回答，帮助用户基于自建知识库进行问答学习。
+* **主要用户**: 学生（个人用户），用于期末复习、课程知识检索。
+* **当前应用场景**: 上传课程 PDF 资料 → 自动入库 → 按课程分类问答 → 获取带来源引用的 AI 回答。
+* **当前项目类型**: RAG 知识库 + 学习助手（轻量级个人版）。
+
+---
+
+# 2. 技术栈
+
+## 前端/UI
+
+| 组件 | 用途 |
+|------|------|
+| **Gradio (gr)** | Web UI 框架，提供聊天界面、文件上传、课程管理等交互组件（`app_web.py` 第4行 `import gradio as gr`） |
+
+## 后端框架
+
+| 组件 | 用途 |
+|------|------|
+| **无传统 Web 框架** | 没有使用 Flask/FastAPI；CLI 模式直接 `python app.py` 运行；Web 模式使用 Gradio 内嵌服务器 `demo.launch()` |
+
+## LLM 模型
+
+| 组件 | 用途 |
+|------|------|
+| **DashScope Generation API** | 调用阿里云 DashScope 平台的大模型生成回答（`llm/dashscope_llm.py`） |
+| **qwen-turbo** | 实际使用的 LLM 模型（`config.py` 第10行 `LLM_MODEL = "qwen-turbo"`） |
+
+## Embedding 模型
+
+| 组件 | 用途 |
+|------|------|
+| **DashScope TextEmbedding API** | 文本向量化（`ingestion/embedder.py`） |
+| **text-embedding-v1** | 实际使用的 Embedding 模型（`config.py` 第10行 `EMBEDDING_MODEL = "text-embedding-v1"`） |
+
+## 向量数据库
+
+| 组件 | 用途 |
+|------|------|
+| **ChromaDB 1.5.9** | 向量存储与相似度检索，使用 HNSW 索引 + cosine 距离（`ingestion/indexer.py`、`retrieval/search.py`） |
+
+## PDF 解析方案
+
+| 组件 | 用途 |
+|------|------|
+| **pypdf (PdfReader)** | 逐页提取 PDF 文本内容（`ingestion/pdf_loader.py`） |
+
+## 主要 Python 库
+
+| 库 | 用途 |
+|----|------|
+| `dashscope` | 阿里云 DashScope SDK，提供 Embedding + LLM Generation API |
+| `chromadb` | 向量数据库客户端 |
+| `gradio` | Web UI 构建 |
+| `pypdf` | PDF 文本提取 |
+| `python-dotenv` | 加载 `.env` 环境变量 |
+| `tenacity` | API 调用重试机制（embedder 和 llm 均使用 `@retry`） |
+| `re` | 文本清洗正则 |
+
+
+# 3. 当前已实现功能
+
+## 3.1 文档处理
+
+| 功能 | 状态 | 实现方式 | 限制 |
+|------|------|----------|------|
+| PDF 上传 | ✅ 已实现 | Gradio `gr.File` 组件支持多文件上传（`app_web.py` 263-267行） | 仅支持 PDF 格式 |
+| PDF 解析 | ✅ 已实现 | `pypdf.PdfReader` 逐页 `extract_text()`，拼接为字符串（`pdf_loader.py`） | 不支持表格、图片、OCR；不支持扫描版 PDF；无法提取章节结构 |
+| 文本清洗 | ✅ 已实现 | 正则去除控制字符、统一换行、去除乱码行（`text_clean.py`，约30行） | 规则简单，无中文特定清洗；无法处理 PDF 提取中常见的换行符断裂问题 |
+| Chunk 切分 | ✅ 已实现 | 固定字符数切分：500字符/chunk，重叠100字符（`chunker.py`，仅15行有效代码） | **无句子边界感知**，可能在句子中间切断；无语义切分；无章节/段落结构保留 |
+
+## 3.2 向量化与索引
+
+| 功能 | 状态 | 实现方式 | 限制 |
+|------|------|----------|------|
+| Embedding | ✅ 已实现 | 调用 DashScope `text-embedding-v1`，含 3 次指数退避重试（`embedder.py`） | 每次入库逐条调用 API，无批量 embedding，速度慢 |
+| 向量存储 | ✅ 已实现 | ChromaDB PersistentClient，HNSW 索引，cosine 距离（`indexer.py`） | 本地单机存储，无法扩展 |
+| 元数据存储 | ✅ 部分实现 | 每条 chunk 存储 `course`、`source`（文件名）、`chunk_index`（`indexer.py` 25-31行） | 元数据仅 3 个字段，无页码、无章节名、无时间戳 |
+| 批量索引 | ❌ 未实现 | 逐条 `collection.add()` | 每个 chunk 单独 add，对大批量文档性能差 |
+
+## 3.3 RAG 检索
+
+| 功能 | 状态 | 实现方式 | 限制 |
+|------|------|----------|------|
+| 语义检索 (Semantic) | ✅ 已实现 | 查询向量化 → ChromaDB `collection.query()` cosine 相似度（`search.py`） | 仅语义检索，单一策略 |
+| 课程过滤检索 | ✅ 已实现 | 通过 metadata `where` 过滤 course 字段（`search.py` 22-23行） | 仅支持单字段过滤 |
+| Top-K 检索 | ✅ 已实现 | 固定 K=5（`config.py` TOP_K=5） | 固定 top_k，不可动态调整 |
+| 相似度展示 | ✅ 已实现 | 以 `1 - distance` 形式展示，保留3位小数（`app.py` 56行，`app_web.py` 232行） | distance 转相似度不一定精确（cosine distance ≠ 1-cosine similarity 对非归一化向量） |
+| Rerank | ❌ **未实现** | `rerank.py` 文件存在但**完全为空**（0字节） | 无法对初检结果重排序 |
+| Hybrid Search | ❌ **未实现** | 代码中无任何关键词/BM25 检索逻辑 | 纯语义检索，对精确关键词匹配不友好 |
+| Multi-Chunk Retrieval | ❌ **未实现** | 无相邻 chunk 合并或父文档检索 | 无法获取完整上下文 |
+
+## 3.4 问答系统
+
+| 功能 | 状态 | 实现方式 | 限制 |
+|------|------|----------|------|
+| 单轮问答 | ✅ 已实现 | `generate()` 函数构建 prompt → LLM 生成回答（`dashscope_llm.py`） | 单次调用，无流式输出 |
+| 多轮问答 / 会话记忆 | ❌ **未实现** | 代码中无任何对话历史存储或传递逻辑 | 每次提问独立处理，无法追问 |
+| 来源引用 | ✅ 部分实现 | System prompt 中要求 LLM 标注来源（格式 `[来源: 片段N - 文件名]`），`app_web.py` 在回答后附加检索详情（220-236行） | 依赖 LLM 自觉标注，不可靠；无 chunk ID 回链 |
+| 检索详情展示 | ✅ 已实现 | Web UI 在回答末尾展示每个片段的相似度、来源文件名、前120字符预览（`app_web.py` 223-233行） | 仅展示，不可点击跳转 |
+| 流式输出 | ❌ 未实现 | `Generation.call()` 非流式，用户需等待完整回答 | 体验差 |
+| 文档无关检测 | ✅ 部分实现 | System prompt 要求 LLM 说"文档中未找到相关信息"（`dashscope_llm.py` 13行） | 未做前端空结果 + LLM 空结果的双重保障 |
+
+## 3.5 Web 界面
+
+| 功能 | 状态 | 实现方式 | 限制 |
+|------|------|----------|------|
+| 课程管理 | ✅ 已实现 | 创建课程、删除课程、课程列表（`app_web.py` 61-163行） | 课程仅作为 metadata 过滤标签，无独立隔离 |
+| 文件上传 | ✅ 已实现 | 多 PDF 上传，自动入库到所选课程（`app_web.py` 97-119行） | 上传过程无进度条；大文件可能超时 |
+| 文件管理 | ✅ 已实现 | 按课程查看文件列表、删除单个文件（`app_web.py` 167-200行） | 无法预览文件内容 |
+| 聊天界面 | ✅ 已实现 | Gradio Chatbot 组件，支持 Enter 发送（`app_web.py` 284-298行） | 消息格式简单；无 Markdown 渲染 |
+| 检索范围选择 | ✅ 已实现 | 下拉框选择课程范围或"全部"（`app_web.py` 287-289行） | 仅按课程过滤 |
+| 统计面板 | ✅ 已实现 | 显示总 chunk 数、各课程 chunk 数（`app_web.py` 19-28行） | 仅 chunk 计数，无更细粒度统计 |
+| 清空对话 | ✅ 已实现 | 清空 chatbot 组件（`app_web.py` 240-241行） | 仅清 UI，不清理后端状态 |
+| CLI 模式 | ✅ 已实现 | `app.py` 提供命令行交互问答循环（26-60行） | 仅基本功能 |
+| 参数设置 | ❌ **未实现** | 无任何 UI 参数调节入口 | Top-K、Chunk Size 硬编码在 config.py |
+
+---
+
+# 4. 当前项目流程
+
+## 4.1 文档入库流程
+
+```
+用户选择 PDF 文件 (Gradio File Upload)
+        ↓
+pypdf.PdfReader 逐页提取文本
+        ↓
+text_clean.clean_text() 清洗文本
+  · 去除控制字符
+  · 统一换行格式
+  · 去除乱码行
+        ↓
+chunker.chunk_text() 固定字符切分
+  · CHUNK_SIZE=500 字符
+  · CHUNK_OVERLAP=100 字符
+  · 无句子边界检测
+        ↓
+embedder.get_embedding() 逐条向量化
+  · DashScope text-embedding-v1
+  · 含重试机制 (tenacity, max 3次)
+        ↓
+indexer.index_chunks() 存入 ChromaDB
+  · Metadata: course, source(filename), chunk_index
+  · collection.add() 逐条写入
+        ↓
+入库完成，用户可在 Web UI 查看统计
+```
+
+## 4.2 问答流程
+
+```
+用户在聊天框输入问题
+        ↓
+选择检索范围 (课程过滤 or 全部)
+        ↓
+embedder.get_embedding(query) 问题向量化
+        ↓
+ChromaDB collection.query()
+  · 语义检索 (cosine 距离)
+  · Top-K=5
+  · 可选 course metadata 过滤
+        ↓
+得到 [docs, metas, scores] 各5条
+        ↓
+llm.generate(query, docs, metas)
+  · build_prompt() 构造 Prompt
+    - 包含 system prompt (角色+规则)
+    - 包含参考文档片段（标注来源）
+  · 调用 DashScope qwen-turbo
+  · 含重试机制
+        ↓
+返回 LLM 回答 + 检索详情
+        ↓
+Gradio Chatbot 展示结果
+```
+
+## 4.3 整体架构图
+
+```
+┌─────────────────────────────────────────────────┐
+│                  Gradio Web UI                   │
+│  ┌──────────┐  ┌──────────┐  ┌───────────────┐  │
+│  │ 课程管理  │  │ 文件管理  │  │  聊天/问答     │  │
+│  └────┬─────┘  └────┬─────┘  └───────┬───────┘  │
+└───────┼──────────────┼───────────────┼──────────┘
+        │              │               │
+        ▼              ▼               ▼
+┌──────────────────────────────────────────────────┐
+│                   app_web.py                      │
+│  (路由 + 回调函数 + 状态管理)                       │
+└──────┬──────────────┬───────────────┬────────────┘
+       │              │               │
+       ▼              ▼               ▼
+┌──────────┐  ┌──────────┐  ┌────────────────┐
+│ingestion/│  │retrieval/│  │    llm/        │
+│pdf_loader│  │search.py │  │dashscope_llm.py│
+│chunker   │  │rerank.py │  │  (qwen-turbo)  │
+│embedder  │  │  (空)    │  └───────┬────────┘
+│indexer   │  └─────┬────┘          │
+└─────┬────┘        │               │
+      │             │               │
+      ▼             ▼               │
+┌──────────────────────────────┐    │
+│        ChromaDB               │    │
+│  (PersistentClient, HNSW)     │    │
+└──────────────────────────────┘    │
+                                    │
+      ┌─────────────────────────────┘
+      ▼
+┌──────────────────────┐
+│   DashScope API       │
+│  · text-embedding-v1  │
+│  · qwen-turbo          │
+└──────────────────────┘
+```
+
+
+# 5. 当前文件结构分析
+
+```
+rag-knowledge-base/
+│
+├── .env                          # 环境变量 (仅1行: DASHSCOPE_API_KEY)
+├── .gitignore                    # Git忽略规则 (.idea/, __pycache__/, .venv/, .env)
+├── requirements.txt              # Python依赖列表 (86行，含所有传递依赖)
+│
+├── config.py                     # 全局配置
+│   · DASHSCOPE_API_KEY           # API密钥 (从.env加载)
+│   · EMBEDDING_MODEL             # = "text-embedding-v1"
+│   · LLM_MODEL                   # = "qwen-turbo"
+│   · CHROMA_PATH                 # = "database/chroma_store"
+│   · COLLECTION_NAME             # = "rag_db"
+│   · CHUNK_SIZE                  # = 500 (字符)
+│   · CHUNK_OVERLAP               # = 100 (字符)
+│   · TOP_K                       # = 5
+│
+├── app.py                        # CLI入口 (78行)
+│   · run_ingestion()             # 入库流程 (PDF→清洗→chunk→入库)
+│   · query_loop()                # 交互式问答循环 (支持 /exit 退出)
+│   · main()                      # 自动检测空库并入库，然后启动问答循环
+│
+├── app_web.py                    # Web UI入口 (368行)
+│   · 课程管理 (CRUD)             # create_course, delete_selected, refresh_ui
+│   · 文件管理                    # upload_files, delete_file, on_course_change
+│   · 聊天问答                    # send_message, clear_chat
+│   · 统计展示                    # _build_stats_md, get_course_stats
+│   · UI布局                      # gr.Blocks 左右分栏 (管理+聊天)
+│
+├── data/
+│   └── pdfs/
+│       └── test.pdf              # 测试用PDF文件 (204KB)
+│
+├── ingestion/                    # 文档摄入模块
+│   ├── __init__.py               # 空文件
+│   ├── pdf_loader.py             # PDF文本提取 (15行)
+│   │   · load_pdf()              # PdfReader逐页extract_text→拼接
+│   ├── chunker.py                # 文本切分 (26行)
+│   │   · chunk_text()            # 固定字符数滑动窗口切分
+│   ├── embedder.py               # 文本向量化 (25行)
+│   │   · get_embedding()         # DashScope API调用 + 重试
+│   └── indexer.py                # 向量索引管理 (78行)
+│       · index_chunks()          # 逐条embedding+写入ChromaDB
+│       · list_courses()          # 获取所有课程名
+│       · get_course_stats()      # 各课程chunk统计
+│       · delete_course()         # 按metadata删除课程
+│       · list_sources()          # 获取课程内文件列表
+│       · get_source_count()      # 获取文件chunk数
+│       · delete_source()         # 按文件删除chunks
+│
+├── retrieval/                    # 检索模块
+│   ├── __init__.py               # 空文件
+│   ├── search.py                 # 语义检索 (47行)
+│   │   · search()                # 向量化查询→ChromaDB query→返回docs/metas/scores
+│   └── rerank.py                 # ★ 空文件 (0字节) — 功能未实现
+│
+├── llm/                          # 大模型模块
+│   ├── __init__.py               # 空文件
+│   └── dashscope_llm.py          # LLM调用 (49行)
+│       · SYSTEM_PROMPT           # 系统提示词 (知识库助手角色)
+│       · build_prompt()          # 构建prompt (拼接context+用户问题)
+│       · generate()              # 调用qwen-turbo + 重试
+│
+├── utils/                        # 工具模块
+│   ├── __init__.py               # 空文件
+│   └── text_clean.py             # 文本清洗 (30行)
+│       · clean_text()            # 正则清洗控制字符/乱码/多余空白
+│
+└── 测试文件
+    ├── test_all.py               # 集成测试 (40行) — 完整pipeline: 加载→清洗→chunk→入库→检索
+    ├── test_ingestion.py         # 几乎空 (仅 print("ok"))
+    ├── test_pdf.py               # ★ 空文件 (0字节)
+    └── test_pipeline.py          # 入库pipeline测试 (27行) — 不含检索和问答
+```
+
+
+# 6. RAG 能力评估
+
+| 能力项 | 状态 | 依据 |
+|--------|------|------|
+| **Semantic Retrieval** (语义检索) | ✅ 已实现 | `search.py` 使用 query embedding + ChromaDB cosine distance 进行语义检索 |
+| **Multi-Chunk Retrieval** (多片段检索) | ⚠️ 部分实现 | Top-K=5 返回多个片段，但每个 chunk 独立返回，**无相邻 chunk 合并、无父文档检索、无 small-to-big 策略** |
+| **Metadata Retrieval** (元数据检索) | ⚠️ 部分实现 | 支持按 `course` 字段过滤（`where={"course": course}`），但仅此一个过滤维度 |
+| **Rerank** (重排序) | ❌ 未实现 | `rerank.py` 文件为空，无任何重排序逻辑 |
+| **Hybrid Search** (混合检索) | ❌ 未实现 | 无关键词检索（BM25/TF-IDF），无混合检索融合策略（如 RRF） |
+| **Citation** (来源引用) | ⚠️ 部分实现 | System prompt 要求 LLM 标注来源，但**无结构化 citation 机制**（无可点击链接、无 chunk ID 回追）；Web UI 在回答后附加检索详情算一种补偿 |
+| **Multi-Document QA** (多文档问答) | ⚠️ 部分实现 | 支持跨文件检索（所有文件在同一 collection），但**无跨文档推理、无文档去重、无来源优先级** |
+| **Conversation Memory** (对话记忆) | ❌ 未实现 | 代码中无任何对话历史存储或传递；`generate()` 每次独立调用，`send_message()` 中 chat_history 仅用于 UI 展示，不传入 LLM |
+| **Query Rewriting** (查询改写) | ❌ 未实现 | 无查询扩展/改写逻辑 |
+| **Streaming** (流式输出) | ❌ 未实现 | 使用非流式 `Generation.call()`，用户需等待完整生成 |
+| **Batch Embedding** (批量向量化) | ❌ 未实现 | `index_chunks()` 逐条调用 `get_embedding()`，无批量 API 调用 |
+| **Document Hierarchy** (文档层级) | ❌ 未实现 | 无章节/段落结构保留，chunk 间无父子关系 |
+| **Chunk Strategy** (切分策略) | ⚠️ 部分实现 | 仅固定字符数切分，**无 RecursiveCharacterTextSplitter、无语义切分、无文档类型感知** |
+| **Evaluation** (评估) | ❌ 未实现 | 无任何 RAG 评估框架（RAGAS 等），无检索质量/答案质量评估 |
+
+
+# 7. 当前存在的问题
+
+## 7.1 功能缺失
+
+1. **Rerank 完全未实现**：`rerank.py` 为空文件，导致检索结果仅依赖 embedding 相似度，对专业性较强的教材内容检索精度不足。
+2. **无对话记忆**：每次提问是独立的，用户无法追问"上一段提到的XX是什么意思"。
+3. **无 Hybrid Search**：仅有语义检索，对专业术语、公式、代码等精确匹配场景表现差。
+4. **无流式输出**：用户需等待数十秒才能看到完整回答，体验差。
+5. **无查询改写**：用户输入口语化问题时无法自动改写为更精确的检索查询。
+6. **Embedding API Key 硬暴露**：`.env` 文件中 API Key 明文存储，且 `.env` 虽在 `.gitignore` 中，但当前文件的 API Key 已经在代码中暴露（我方看到的文件内容即为实际 Key）。
+
+## 7.2 架构问题
+
+1. **ChromaDB 客户端重复创建**：`indexer.py` 和 `search.py` 各自独立创建 `client` 和 `collection` 实例（第10-14行完全相同），缺乏单例管理。
+2. **无依赖注入/配置管理**：全局变量 `client`、`collection` 在模块导入时即初始化。
+3. **无错误处理中间层**：API 调用虽有重试，但上层（`app.py`、`app_web.py`）无统一异常处理。
+4. **无日志系统**：所有输出使用 `print()`，无法追踪问题。
+5. **无异步支持**：所有 I/O 操作（API 调用、文件读取）均为同步阻塞。
+6. **项目从根目录 e:\echo 迁移到 e:\echo\rag-knowledge-base**：git status 显示根目录下原有文件（app.py, config.py 等）已被删除（D 状态），代码迁移到了 `rag-knowledge-base/` 子目录。
+
+## 7.3 检索问题
+
+1. **固定 Top-K=5 不可调**：无法根据查询类型或文档库大小动态调整。
+2. **相似度计算展示不精确**：`1 - distance` 对非归一化向量的 cosine distance 不等于 cosine similarity。
+3. **无相关性阈值过滤**：返回所有 Top-K 结果，即使相似度极低也会传给 LLM，可能引入噪声。
+4. **无去重机制**：相同或高度相似的 chunk 可能同时返回。
+
+## 7.4 Chunk 问题
+
+1. **固定字符数切分**：500字符一刀切，可能在句子中间断开，严重影响语义完整性和检索效果。
+2. **无章节结构利用**：PDF 文本提取后丢失了所有章节/标题信息。
+3. **无元数据继承**：chunk 不记录页码、章节名，无法定位原文位置。
+4. **重叠策略粗糙**：100字符固定重叠不保证句子完整性。
+
+## 7.5 Prompt 问题
+
+1. **System Prompt 过于简单**：仅3条规则，无 few-shot 示例。
+2. **无引用格式校验**：依赖 LLM 自觉遵守引用格式，无后处理验证。
+3. **Prompt 模板硬编码**：未考虑不同场景（学术问答/概念解释/计算题）使用不同 prompt。
+4. **无 token 计数/截断**：如果检索到的文档总长度超过模型 context 限制，会直接报错而非截断。
+5. **LLM 模型使用 qwen-turbo**：不是最强大的模型，复杂推理能力有限。
+
+## 7.6 UI 问题
+
+1. **无响应状态反馈**：上传大 PDF 或等待 LLM 回答时无 loading 动画。
+2. **消息不支持 Markdown**：LLM 回答可能包含 Markdown 格式但未被正确渲染。
+3. **无对话历史持久化**：刷新页面或重启后对话消失。
+4. **无移动端适配**。
+5. **无暗色模式**。
+6. **文件上传无进度条**。
+
+## 7.7 安全问题
+
+1. **API Key 明文存储**：`.env` 文件中 `DASHSCOPE_API_KEY=sk-f06b8ed05f264e6c83aa0df48d1bbb30`（实际已暴露）。
+2. **无用户认证**：任何人启动服务即可访问。
+3. **无输入过滤**：用户输入直接传入 API，无内容审核。
+
+
+# 8. 下一阶段开发建议
+
+## P0（必须做 — 影响核心功能可用性）
+
+| 优先级 | 任务 | 理由 |
+|--------|------|------|
+| P0 | **实现 Rerank** | 当前仅靠 embedding 检索精度不足，尤其对教材类长文本；`rerank.py` 已预留文件位，可直接使用 DashScope Rerank API |
+| P0 | **改进 Chunk 策略** | 当前固定字符切分在句子中间截断，严重影响检索和回答质量；建议使用 `RecursiveCharacterTextSplitter` 或至少按句号/换行分句 |
+| P0 | **实现相关性阈值过滤** | 当前低相似度结果也会传给 LLM，引入噪声导致幻觉；建议相似度<0.3 的结果不纳入 context |
+| P0 | **轮换 API Key** | `.env` 中的 API Key 已暴露，需立即更换 |
+| P0 | **添加 token 计数与截断** | 防止 context 超限导致 API 调用失败 |
+
+## P1（建议做 — 显著提升用户体验和系统能力）
+
+| 优先级 | 任务 | 理由 |
+|--------|------|------|
+| P1 | **实现多轮对话记忆** | 当前无对话历史，无法追问；实现后将使系统从"搜索引擎"升级为"学习助手" |
+| P1 | **实现 Hybrid Search** | 结合 BM25 关键词检索 + 语义检索 + RRF 融合，显著提升对专业术语的检索精度 |
+| P1 | **实现流式输出** | 消除等待焦虑，显著提升用户体验 |
+| P1 | **优化 Prompt 工程** | 添加 few-shot 示例、场景分类 prompt、引用格式后处理校验 |
+| P1 | **改进元数据体系** | 记录页码、章节名、文档标题，支持更细粒度过滤和引用定位 |
+| P1 | **添加文档预览** | 让用户在上传前/后可以查看 PDF 内容 |
+
+## P2（未来优化 — 提升工程质量和扩展性）
+
+| 优先级 | 任务 | 理由 |
+|--------|------|------|
+| P2 | **添加 RAG 评估框架** | 使用 RAGAS 或自定义指标评估检索精度和答案质量 |
+| P2 | **查询改写 (Query Rewriting)** | 将用户口语化问题改写为更精确的检索查询 |
+| P2 | **实现 Small-to-Big 检索** | 检索小 chunk，返回大 chunk 或完整段落作为 context |
+| P2 | **支持更多文件格式** | .txt, .docx, .md, 网页等 |
+| P2 | **对话历史持久化** | 保存对话记录，支持历史查看和继续对话 |
+| P2 | **代码架构重构** | 统一 ChromaDB 客户端管理、引入依赖注入、添加日志系统 |
+| P2 | **添加用户认证** | 多用户场景下的数据隔离 |
+| P2 | **换用更强大的 LLM** | qwen-turbo → qwen-plus 或 qwen-max |
+
+
+# 9. 项目成熟度评估
+
+| 维度 | 评分 (10分制) | 依据 |
+|------|:---:|------|
+| **工程结构** | 5/10 | 模块划分清晰（ingestion/retrieval/llm/utils），但 `__init__.py` 全空、ChromaDB 客户端重复创建、无日志系统、测试文件几乎全空 |
+| **RAG 能力** | 3/10 | 实现了基本 pipeline（load→chunk→embed→search→generate），但缺少 Rerank、Hybrid Search、多轮对话、查询改写、流式输出、chunk 策略粗糙，核心 RAG 能力仅覆盖最基础路径 |
+| **用户体验** | 5/10 | Gradio 提供了可用的 Web 界面，课程管理+文件管理+聊天布局合理；但无流式输出、无 loading 状态、无 Markdown 渲染、无对话持久化 |
+| **学习价值** | 6/10 | 项目涵盖了 RAG 全流程，代码简洁易读（总代码量约 400 行），适合作为 RAG 入门学习项目；但缺失了 Rerank/Hybrid Search 等进阶 RAG 技术 |
+| **期末作业水平** | 5/10 | 基础流程完整、有 Web UI、有课程管理，能达到本科课程设计的及格线；但缺少创新点（如 Rerank、Hybrid Search、多轮对话、评估框架），在研究生或高要求课程中需要大幅补充 |
+| **长期自用价值** | 3/10 | 当前版本仅能完成最简单的"上传 PDF→提问"流程，缺少多轮对话、chunk 质量差、无 rerank 导致答案质量不稳定；难以作为日常学习工具长期使用 |
+
+**综合评分: 4.5/10** — 项目拥有良好的起点和清晰的模块划分，但 RAG 核心能力过于基础，需要 P0 和 P1 级别的改进才能成为真正可用的产品。
+
+---
+
+*报告生成完毕。基于 `rag-knowledge-base/` 目录下全部 22 个文件的实际代码分析。*
