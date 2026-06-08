@@ -13,11 +13,14 @@ from ingestion.indexer import (
 from retrieval.search import search
 from llm.dashscope_llm import generate, generate_stream
 from llm.learning_assistant import (
-    generate_course_summary,
     generate_chapter_summary,
-    generate_review_outline,
     generate_exam_questions,
     explain_concept,
+)
+from router.intent_router import route as route_intent
+from memory.tracker import (
+    record_chapter, mark_mastery, get_context_prompt,
+    get_summary, get_chapters_learned, get_weak_concepts,
 )
 from utils.text_clean import clean_text
 from utils.ppt_converter import convert_pptx_to_pdf
@@ -26,44 +29,71 @@ from storage.learning_log import save_record, get_history
 
 # ── helpers ─────────────────────────────────────────────
 
-def _build_stats_md():
-    stats = get_course_stats()
-    if not stats:
-        return "暂无资料"
-    lines = []
-    total = sum(stats.values())
-    lines.append(f"共 **{total}** 个 chunk")
-    for course, n in sorted(stats.items()):
-        lines.append(f"- {course}: {n}")
+def _build_course_choices():
+    """返回课程下拉列表选项。"""
+    courses = list_courses()
+    return ["全部"] + courses
+
+
+def _build_welcome(course: str | None) -> str:
+    """生成切换课程后的欢迎消息。"""
+    if not course or course == "全部":
+        return (
+            "## 📚 欢迎使用大学课程学习助手\n\n"
+            "请选择一个课程，或上传 PDF 课件开始学习。\n\n"
+            "💡 你可以直接输入问题，比如：\n"
+            '- "总结一下第一章"\n'
+            '- "出5道选择题"\n'
+            '- "解释死锁的概念"'
+        )
+
+    from ingestion.indexer import list_sections
+    sources = list_sources(course)
+    sections = list_sections(course)
+    memory = get_summary(course)
+
+    lines = [f"## 📖 {course}\n"]
+    lines.append(f"已上传 {len(sources)} 个文件。")
+
+    if sections:
+        lines.append("\n**检测到的章节：**")
+        for s in sections:
+            learned = " ✅" if s in memory.get("chapters_learned", []) else ""
+            lines.append(f"- {s}{learned}")
+
+    if memory.get("weak_count", 0) > 0:
+        lines.append(f"\n⚠️ {memory['weak_count']} 个薄弱知识点待加强。")
+
+    lines.append('\n💡 你可以直接说："总结第二章" / "出5道选择" / "解释关键概念"')
     return "\n".join(lines)
 
 
-def _build_course_lists(extra=None):
-    courses = list_courses()
-    if extra and extra not in courses:
-        courses = [extra] + courses
-    choices = ["全部"] + courses
-    return choices, choices
+def _format_sources_detail(docs, metas, scores) -> str:
+    """生成折叠的检索来源 HTML details/summary。"""
+    if not docs:
+        return ""
+    lines = ["\n<details>\n<summary>📎 检索来源 ({n}个片段)</summary>\n".format(n=len(docs))]
+    for i, (doc, meta, score) in enumerate(zip(docs, metas, scores)):
+        src = meta.get("source", "?")
+        page = meta.get("page", 0)
+        section = meta.get("section", "")
+        preview = doc[:120].replace("\n", " ")
+        source_info = f"[{src}]"
+        if section:
+            source_info += f" · 章节: {section}"
+        if page:
+            source_info += f" · 第{page}页"
+        lines.append(
+            f"- **片段{i + 1}** "
+            f"(相似度: {score:.3f}) {source_info}: {preview}..."
+        )
+    lines.append("\n</details>")
+    return "\n".join(lines)
 
-
-def _build_file_choices(course):
-    if not course or course == "全部":
-        return []
-    choices = []
-    for s in list_sources(course):
-        n = get_source_count(course, s)
-        choices.append(f"{s} ({n} chunks)")
-    return choices
-
-
-# ── learning record helpers ─────────────────────────────
 
 def _detect_msg_type(message: str) -> str:
-    """从命令消息中检测消息类型。"""
     msg = message.strip()
-    if msg.startswith("/总结"):
-        return "summary"
-    elif msg.startswith("/章节"):
+    if msg.startswith("/总结") or msg.startswith("/章节"):
         return "chapter"
     elif msg.startswith("/复习"):
         return "review"
@@ -76,279 +106,224 @@ def _detect_msg_type(message: str) -> str:
 
 def _save_qa_record(question: str, answer: str, course: str | None,
                     sources: list[str] | None = None, msg_type: str = "qa"):
-    """保存问答记录到学习日志（忽略保存异常）。"""
     try:
-        save_record(
-            question=question,
-            answer=answer,
-            course=course or "",
-            sources=sources,
-            msg_type=msg_type,
-        )
+        save_record(question=question, answer=answer, course=course or "",
+                    sources=sources, msg_type=msg_type)
     except Exception:
-        pass  # 静默失败，不影响主流程
+        pass
 
 
-# ── learning assistant command handler ───────────────────
+def _list_sections_safe(course):
+    from ingestion.indexer import list_sections
+    try:
+        return list_sections(course)
+    except Exception:
+        return []
 
-def _handle_learning_command(message: str, course: str | None) -> str | None:
-    """
-    处理学习助手斜杠命令。返回 None 表示不是命令，继续正常问答流程。
 
-    支持的命令：
-      /总结        — 课程总结
-      /总结 课程名  — 指定课程总结
-      /章节 章节名 — 章节总结
-      /复习        — 复习提纲
-      /出题 N       — 自动出题（N=数量，默认5）
-      /出题 章节 N  — 指定章节出题
-      /解释 知识点  — 知识点通俗解释
-      /帮助        — 显示命令帮助
-    """
-    msg = message.strip()
+def _course_count(course):
+    stats = get_course_stats()
+    return stats.get(course, 0)
 
-    # ── /帮助 ──
-    if msg in ["/帮助", "/help", "/?"]:
-        return _help_text()
 
-    # ── /历史 ──
-    if msg.startswith("/历史"):
-        target = msg[3:].strip() or (course if course else "")
+# ── chat callbacks ──────────────────────────────────────
+
+def send_message(message, chat_history, chat_course):
+    if not message.strip():
+        yield chat_history, ""
+        return
+
+    course_name = None if chat_course == "全部" else chat_course
+
+    # Step 1: Context
+    context = get_context_prompt(course_name)
+
+    # Step 2: Intent routing
+    intent = route_intent(message, context_prompt=context)
+
+    # ── help ──
+    if intent["intent"] == "help":
+        reply = """## 📚 使用帮助
+
+**直接说话就行，无需命令格式：**
+- "总结第二章" → 生成章节总结
+- "出5道选择题" → 自动出题
+- "解释红黑树" → 知识点解释
+- "标记XX为薄弱点" → 掌握度标记
+- "我的薄弱点有哪些" → 查看薄弱点
+- "有哪些文件" → 查看课程文件
+
+支持的文件操作：上传 PDF/PPT/PPTX，删除课程/文件。"""
+        chat_history.append({"role": "user", "content": message})
+        chat_history.append({"role": "assistant", "content": reply})
+        yield chat_history, ""
+        return
+
+    # ── history ──
+    if intent["intent"] == "history":
+        target = intent.get("chapter") or course_name or ""
         records = get_history(course=target, limit=20)
         if not records:
-            return "暂无学习记录。"
-        lines = [f"## 📝 学习记录 ({target or '全部课程'})\n"]
-        for r in records:
-            ts = r["timestamp"][:19].replace("T", " ")
-            c = r.get("course", "")
-            q = r["question"][:80]
-            lines.append(f"- **{ts}** [{c}] {q}")
-        return "\n".join(lines)
-
-    # ── /总结 ──
-    if msg.startswith("/总结"):
-        target = msg[3:].strip()
-        if target:
-            return generate_course_summary(target)
-        elif course:
-            return generate_course_summary(course)
+            reply = "暂无学习记录。"
         else:
-            return "请指定课程名称或先在左侧选择课程。\n\n用法：`/总结 课程名`"
+            lines = [f"## 📝 学习记录 ({target or '全部课程'})\n"]
+            for r in records:
+                ts = r["timestamp"][:19].replace("T", " ")
+                c = r.get("course", "")
+                q = r["question"][:80]
+                lines.append(f"- **{ts}** [{c}] {q}")
+            reply = "\n".join(lines)
+        chat_history.append({"role": "user", "content": message})
+        chat_history.append({"role": "assistant", "content": reply})
+        yield chat_history, ""
+        return
 
-    # ── /章节 ──
-    if msg.startswith("/章节"):
-        section = msg[3:].strip()
-        if not section:
-            return "请指定章节名称。\n\n用法：`/章节 红黑树`"
-        if not course:
-            return "请先在左侧选择课程。"
-        return generate_chapter_summary(course, section)
-
-    # ── /复习 ──
-    if msg.startswith("/复习"):
-        target = msg[3:].strip()
-        if target:
-            return generate_review_outline(target)
-        elif course:
-            return generate_review_outline(course)
-        else:
-            return "请指定课程名称或先在左侧选择课程。\n\n用法：`/复习 课程名`"
-
-    # ── /出题 ──
-    if msg.startswith("/出题"):
-        args = msg[3:].strip()
-        if not course:
-            return "请先在左侧选择课程。"
-        return _handle_exam_command(course, args)
-
-    # ── /解释 ──
-    if msg.startswith("/解释"):
-        concept = msg[3:].strip()
+    # ── mark_mastery ──
+    if intent["intent"] == "mark_mastery":
+        concept = intent.get("concept", "")
+        level = intent.get("mastery_level", "unmarked")
         if not concept:
-            return "请输入要解释的知识点。\n\n用法：`/解释 TCP三次握手`"
-        if not course:
-            return "请先在左侧选择课程。"
-        return explain_concept(course, concept)
+            reply = "请说明要标记哪个知识点，例如：\"标记死锁为薄弱点\""
+        else:
+            mark_mastery(course_name, concept, level)
+            level_label = {"mastered": "✅ 已掌握", "weak": "⚠️ 薄弱点", "unmarked": "▸ 未标记"}
+            reply = f"已将「{concept}」标记为：{level_label.get(level, level)}"
+        chat_history.append({"role": "user", "content": message})
+        chat_history.append({"role": "assistant", "content": reply})
+        _save_qa_record(message, reply, course_name, msg_type="mastery")
+        yield chat_history, ""
+        return
 
-    # ── 自然语言出题：识别 "再出N道关于XX的题" ──
-    exam_result = _detect_natural_exam(msg)
-    if exam_result and course:
-        topic, count, qtype = exam_result
-        return generate_exam_questions(
-            course, section=topic, question_type=qtype, count=count,
-        )
+    # ── course_mgmt ──
+    if intent["intent"] == "course_mgmt":
+        sources = list_sources(course_name) if course_name else []
+        from ingestion.indexer import list_sections
+        sections = list_sections(course_name) if course_name else []
+        lines = [f"## 📁 课程「{course_name or '全部'}」\n"]
+        if sources:
+            lines.append("**文件列表：**")
+            for s in sources:
+                cnt = get_source_count(course_name, s)
+                lines.append(f"- {s} ({cnt} chunks)")
+        else:
+            lines.append("暂无文件。")
+        if sections:
+            lines.append("\n**章节：**")
+            for s in sections:
+                lines.append(f"- {s}")
+        lines.append("\n💡 上传 PDF：点击 📎 按钮")
+        reply = "\n".join(lines)
+        chat_history.append({"role": "user", "content": message})
+        chat_history.append({"role": "assistant", "content": reply})
+        yield chat_history, ""
+        return
 
-    return None  # 不是命令，进入正常问答
+    # ── chapter_summary ──
+    if intent["intent"] == "chapter_summary":
+        chapter = intent.get("chapter") or message
+        if not course_name:
+            reply = "请先在顶部选择一个课程。"
+        else:
+            reply = generate_chapter_summary(course_name, chapter)
+            if "未在课程" not in reply:
+                record_chapter(course_name, chapter)
+        chat_history.append({"role": "user", "content": message})
+        chat_history.append({"role": "assistant", "content": reply})
+        _save_qa_record(message, reply, course_name, msg_type="chapter")
+        yield chat_history, ""
+        return
+
+    # ── exam ──
+    if intent["intent"] == "exam":
+        if not course_name:
+            reply = "请先在顶部选择一个课程。"
+        else:
+            chapter = intent.get("chapter") or ""
+            qtype = intent.get("question_type") or "mixed"
+            count = intent.get("count") or 5
+            reply = generate_exam_questions(course_name, section=chapter,
+                                            question_type=qtype, count=count)
+            if chapter and "未在课程" not in reply:
+                record_chapter(course_name, chapter)
+        chat_history.append({"role": "user", "content": message})
+        chat_history.append({"role": "assistant", "content": reply})
+        _save_qa_record(message, reply, course_name, msg_type="exam")
+        yield chat_history, ""
+        return
+
+    # ── explain ──
+    if intent["intent"] == "explain":
+        concept = intent.get("concept") or message
+        if not course_name:
+            reply = "请先在顶部选择一个课程。"
+        else:
+            reply = explain_concept(course_name, concept)
+        chat_history.append({"role": "user", "content": message})
+        chat_history.append({"role": "assistant", "content": reply})
+        _save_qa_record(message, reply, course_name, msg_type="explain")
+        yield chat_history, ""
+        return
+
+    # ── default: qa ──
+    docs, metas, scores = search(message, course=course_name)
+
+    if not docs:
+        reply = "未在当前课程资料中找到相关内容。\n\n"
+        if course_name:
+            secs = _list_sections_safe(course_name)
+            if secs:
+                reply += "**该课程已有章节：**\n"
+                for s in secs:
+                    reply += f"- {s}\n"
+                reply += "\n建议：\n- 换个说法试试\n- 切换到「全部」检索\n- 上传更多课程资料"
+        chat_history.append({"role": "user", "content": message})
+        chat_history.append({"role": "assistant", "content": reply})
+        yield chat_history, ""
+        return
+
+    chat_history.append({"role": "user", "content": message})
+    chat_history.append({"role": "assistant", "content": ""})
+    full_answer = ""
+    try:
+        for chunk in generate_stream(message, docs, metas):
+            full_answer += chunk
+            chat_history[-1]["content"] = full_answer
+            yield chat_history, ""
+    except Exception:
+        full_answer = generate(message, docs, metas)
+        chat_history[-1]["content"] = full_answer
+        yield chat_history, ""
+
+    sources_html = _format_sources_detail(docs, metas, scores)
+    chat_history[-1]["content"] = full_answer + sources_html
+
+    sources_list = []
+    for meta in metas:
+        src = meta.get("source", "?")
+        page = meta.get("page", 0)
+        info = src
+        if page:
+            info += f" (第{page}页)"
+        sources_list.append(info)
+    _save_qa_record(message, full_answer, course_name, sources=sources_list)
+
+    yield chat_history, ""
 
 
-def _handle_exam_command(course: str, args: str) -> str:
-    """
-    解析 /出题 命令的参数。
-
-    支持格式：
-      /出题 N              → N道混合题（全部课程）
-      /出题 知识点 N       → N道混合题（指定知识点）
-      /出题 选择 N         → N道选择题
-      /出题 知识点 选择 N  → N道选择题（指定知识点）
-      /出题 判断           → 5道判断题
-      /出题 简答 10        → 10道简答题
-
-    知识点可以是章节名、概念名或任何自定义关键词。
-    """
-    section = ""
-    question_type = "mixed"
-    count = 5
-
-    if not args:
-        return generate_exam_questions(course, count=count)
-
-    parts = args.split()
-    type_map = {
-        "选择": "choice", "选择题": "choice",
-        "判断": "truefalse", "判断题": "truefalse",
-        "简答": "shortanswer", "简答题": "shortanswer",
-        "混合": "mixed", "全部": "mixed",
-    }
-
-    # 从末尾开始解析：最后一段如果是数字=数量，倒数第二段如果是题型名=题型
-    last_is_digit = parts[-1].isdigit() if parts else False
-
-    if last_is_digit:
-        count = max(1, min(int(parts[-1]), 20))
-        parts = parts[:-1]  # 去掉数量
-
-    # 检查最后一个词是否是题型
-    if parts and parts[-1] in type_map:
-        question_type = type_map[parts[-1]]
-        parts = parts[:-1]  # 去掉题型
-
-    # 剩余部分是知识点
-    if parts:
-        section = " ".join(parts)
-
-    return generate_exam_questions(
-        course, section=section, question_type=question_type, count=count,
-    )
-
-
-def _detect_natural_exam(msg: str) -> tuple[str, int, str] | None:
-    """
-    识别自然语言出题请求。
-
-    匹配模式：
-      - "再出N道关于XX的题"
-      - "再出N道XX选择题"
-      - "给我出N道关于XX的简答题"
-      - "出N道XX判断题"
-    """
-    import re
-
-    type_map = {
-        "选择": "choice", "选择题": "choice",
-        "判断": "truefalse", "判断题": "truefalse",
-        "简答": "shortanswer", "简答题": "shortanswer",
-    }
-
-    patterns = [
-        # "再出5道关于B树的题" / "给我出3道红黑树的选择题"
-        r"(?:再|给[我你]|帮我)?\s*出\s*(\d+)\s*道\s*(?:关于)?\s*(.+?)\s*(?:的)?\s*(选择题|判断题|简答题|选择|判断|简答)?\s*(?:题|题目)?\s*$",
-        # "出5道B树题" / "出3道选择"
-        r"^出\s*(\d+)\s*道\s*(.+?)\s*(选择题|判断题|简答题|选择|判断|简答)?\s*(?:题|题目)?\s*$",
-    ]
-
-    for pat in patterns:
-        m = re.match(pat, msg)
-        if m:
-            count = int(m.group(1))
-            count = max(1, min(count, 20))
-            topic = m.group(2).strip().rstrip("的。！？")
-            qtype_raw = m.group(3) or ""
-            qtype = type_map.get(qtype_raw, "mixed")
-            return (topic, count, qtype)
-
-    return None
-
-
-def _help_text() -> str:
-    """返回帮助信息。"""
-    return """## 📚 学习助手命令
-
-| 命令 | 说明 | 示例 |
-|------|------|------|
-| `/总结` | 生成当前课程总结 | `/总结` |
-| `/总结 课程名` | 生成指定课程总结 | `/总结 数据结构` |
-| `/章节 章节名` | 生成章节总结 | `/章节 红黑树` |
-| `/复习` | 生成考前复习提纲 | `/复习` |
-| `/出题 N` | 出N道混合题 | `/出题 10` |
-| `/出题 知识点 N` | 指定知识点出题 | `/出题 B树 5` |
-| `/出题 选择 N` | 指定题型出题 | `/出题 判断 3` |
-| `/出题 知识点 选择 N` | 知识点+题型 | `/出题 红黑树 简答 3` |
-| 自然语言出题 | 直接说出题需求 | `再出5道关于B树的题` |
-| `/解释 知识点` | 通俗解释知识点 | `/解释 TCP三次握手` |
-| `/帮助` | 显示本帮助 | `/帮助` |
-| `/历史` | 查看学习记录 | `/历史` |
-| `/历史 课程` | 查看指定课程记录 | `/历史 数据结构` |
-
-💡 也可以直接输入问题，使用正常问答功能。"""
+def clear_chat():
+    return [], ""
 
 
 # ── document management callbacks ────────────────────────
 
-def refresh_ui():
-    radio_choices, dd_choices = _build_course_lists()
-    return (
-        gr.update(choices=radio_choices, value="全部"),
-        gr.update(choices=dd_choices, value="全部"),
-        _build_stats_md(),
-        "",
-    )
-
-
-def create_course(name):
-    name = name.strip()
-    if not name:
-        radio_choices, dd_choices = _build_course_lists()
-        return (
-            gr.update(choices=radio_choices),
-            gr.update(choices=dd_choices),
-            _build_stats_md(),
-            "请输入课程名称",
-        )
-    if name == "全部":
-        radio_choices, dd_choices = _build_course_lists()
-        return (
-            gr.update(choices=radio_choices),
-            gr.update(choices=dd_choices),
-            _build_stats_md(),
-            "课程名不能为'全部'",
-        )
-    if name in list_courses():
-        radio_choices, dd_choices = _build_course_lists()
-        return (
-            gr.update(choices=radio_choices),
-            gr.update(choices=dd_choices),
-            _build_stats_md(),
-            f"课程 '{name}' 已存在",
-        )
-    # include new course in choices even though it has no chunks yet
-    radio_choices, dd_choices = _build_course_lists(extra=name)
-    return (
-        gr.update(choices=radio_choices, value=name),
-        gr.update(choices=dd_choices, value=name),
-        _build_stats_md(),
-        f"课程 '{name}' 已创建，请上传资料",
-    )
-
-
-def upload_files(files, course):
-    # 支持的扩展名
+def upload_files_handler(files, course):
     PPT_EXTENSIONS = {".ppt", ".pptx"}
     ALL_SUPPORTED = {".pdf", ".pptx", ".ppt"}
 
     if files is None:
-        return _upload_result("请先选择 PDF / PPT / PPTX 文件")
+        return "请先选择文件", gr.update()
     if not course or course == "全部":
-        return _upload_result("请先在左侧选择或创建一个课程")
+        return "请先选择或创建一个课程", gr.update()
 
     if not isinstance(files, list):
         files = [files]
@@ -370,350 +345,163 @@ def upload_files(files, course):
         temp_dir = None
 
         try:
-            # ── PPT/PPTX 文件：先转为 PDF ──
             if ext in PPT_EXTENSIONS:
                 pdf_path, temp_dir = convert_pptx_to_pdf(path)
 
-            # ── 使用带 metadata 的加载流程 ──
             pages = load_pdf_with_meta(pdf_path)
-
-            # 清洗每页文本
             for p in pages:
                 p["text"] = clean_text(p["text"])
-
-            # 切分 chunk（保留页码和章节信息）
             chunk_dicts = chunk_text_with_meta(pages)
-
-            # 转换为纯文本列表（向后兼容）
             chunk_texts = [c["text"] for c in chunk_dicts]
-            # 提取 metadata 列表
             chunk_metas = [{"page": c["page"], "section": c["section"]} for c in chunk_dicts]
 
             index_chunks(chunk_texts, course=course, source=source_name,
                          chunk_metas=chunk_metas)
             total_chunks += len(chunk_texts)
             success_count += 1
-
         except Exception as e:
             errors.append(f"{source_name}: {e}")
-
         finally:
-            # 清理临时 PDF 和目录
             if temp_dir and os.path.isdir(temp_dir):
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
-    # 组装结果消息
-    msg_parts = [
-        f"入库完成: {success_count}/{len(files)} 个文件,"
-        f" {total_chunks} 个 chunk |"
-        f" 课程 '{course}' 总计: {_course_count(course)} chunks"
-    ]
+    msg = f"入库完成: {success_count}/{len(files)} 个文件, {total_chunks} 个 chunk"
     if errors:
-        msg_parts.append(f"\n⚠️ {len(errors)} 个文件处理失败:")
-        for err in errors:
-            msg_parts.append(f"  - {err}")
+        msg += f"\n⚠️ {len(errors)} 个失败: " + "; ".join(errors)
 
-    return _upload_result("".join(msg_parts), course=course)
+    return msg, gr.update(choices=_build_course_choices())
 
 
-def _upload_result(msg, course=None):
-    radio_choices, dd_choices = _build_course_lists()
-    if course:
-        fc = _build_file_choices(course)
-        file_update = gr.update(choices=fc, value=None)
-    else:
-        file_update = gr.update()
-    return (
-        gr.update(choices=radio_choices),
-        gr.update(choices=dd_choices),
-        _build_stats_md(),
-        msg,
-        file_update,
-    )
-
-
-def _course_count(course):
-    stats = get_course_stats()
-    return stats.get(course, 0)
-
-
-def delete_selected(course):
+def delete_course_handler(course):
     if not course or course == "全部":
-        radio_choices, dd_choices = _build_course_lists()
-        return (
-            gr.update(choices=radio_choices),
-            gr.update(choices=dd_choices),
-            _build_stats_md(),
-            "请选择要删除的课程",
-            gr.update(choices=[], value=None),
-        )
-    n = _course_count(course)
+        return "请选择要删除的课程", gr.update(choices=_build_course_choices(), value="全部")
     delete_course(course)
-    radio_choices, dd_choices = _build_course_lists()
-    return (
-        gr.update(choices=radio_choices, value="全部"),
-        gr.update(choices=dd_choices, value="全部"),
-        _build_stats_md(),
-        f"已删除课程 '{course}'，清除 {n} 个 chunk",
-        gr.update(choices=[], value=None),
-    )
-
-
-# ── file management callbacks ────────────────────────────
-
-def on_course_change(course):
-    """当选中课程变化时，更新文件列表"""
-    return gr.update(choices=_build_file_choices(course), value=None)
-
-
-def delete_file(course, file_entry):
-    """删除课程中的某个文件"""
-    if not course or course == "全部":
-        return _file_result("请先选择课程")
-    if not file_entry:
-        return _file_result("请选择要删除的文件")
-
-    # file_entry format: "filename.pdf (7 chunks)", extract filename
-    source = file_entry.split(" (")[0]
-
-    n = get_source_count(course, source)
-    delete_source(course, source)
-
-    # refresh file list
-    sources = list_sources(course)
-    new_choices = []
-    for s in sources:
-        cnt = get_source_count(course, s)
-        new_choices.append(f"{s} ({cnt} chunks)")
-
-    return (
-        gr.update(choices=new_choices, value=None),
-        f"已删除 '{source}'，清除 {n} 个 chunk",
-    )
-
-
-def _file_result(msg):
-    return gr.update(), msg
-
-
-# ── chat callbacks ──────────────────────────────────────
-
-def send_message(message, chat_history, chat_course):
-    """
-    处理用户消息，支持流式输出。
-
-    流程：
-      1. 识别学习助手斜杠命令 → 非流式返回完整结果
-      2. 正常问答 → 检索 + 流式生成 + 检索详情
-    """
-    if not message.strip():
-        yield chat_history, ""
-        return
-
-    course_filter = None if chat_course == "全部" else chat_course
-    course_name = chat_course if chat_course != "全部" else None
-
-    # ── 学习助手命令处理（非流式）──
-    reply = _handle_learning_command(message, course_name)
-    if reply is not None:
-        chat_history.append({"role": "user", "content": message})
-        chat_history.append({"role": "assistant", "content": reply})
-        _save_qa_record(message, reply, course_name, msg_type=_detect_msg_type(message))
-        yield chat_history, ""
-        return
-
-    # ── 正常问答流程 ──
-    docs, metas, scores = search(message, course=course_filter)
-
-    if not docs:
-        from config import NO_RESULT_MSG
-        reply = NO_RESULT_MSG
-        if chat_course != "全部":
-            reply += f"\n提示：当前检索范围限定在「{chat_course}」，可切换到「全部」试试。"
-        chat_history.append({"role": "user", "content": message})
-        chat_history.append({"role": "assistant", "content": reply})
-        yield chat_history, ""
-        return
-
-    # ── 构建检索详情（回答后追加）──
-    detail = "\n\n---\n**检索详情**"
-    if chat_course != "全部":
-        detail += f" (@{chat_course})"
-    detail += "\n"
-    for i, (doc, meta, score) in enumerate(zip(docs, metas, scores)):
-        src = meta.get("source", "?")
-        page = meta.get("page", 0)
-        section = meta.get("section", "")
-        preview = doc[:120].replace("\n", " ")
-
-        source_info = f"[{src}]"
-        if section:
-            source_info += f" · 章节: {section}"
-        if page:
-            source_info += f" · 第{page}页"
-
-        detail += (
-            f"\n- **片段{i + 1}** "
-            f"(相似度: {score:.3f}) {source_info}: {preview}..."
-        )
-
-    # ── 流式生成回答 ──
-    chat_history.append({"role": "user", "content": message})
-    chat_history.append({"role": "assistant", "content": ""})
-    full_answer = ""
-    try:
-        for chunk in generate_stream(message, docs, metas):
-            full_answer += chunk
-            chat_history[-1]["content"] = full_answer
-            yield chat_history, ""
-    except Exception:
-        # Fallback: 非流式
-        full_answer = generate(message, docs, metas)
-        chat_history[-1]["content"] = full_answer
-        yield chat_history, ""
-
-    # 追加检索详情
-    chat_history[-1]["content"] = full_answer + detail
-
-    # 保存学习记录
-    sources_list = []
-    for meta in metas:
-        src = meta.get("source", "?")
-        page = meta.get("page", 0)
-        info = src
-        if page:
-            info += f" (第{page}页)"
-        sources_list.append(info)
-    _save_qa_record(message, full_answer, course_name, sources=sources_list)
-
-    yield chat_history, ""
-
-
-def clear_chat():
-    return [], ""
+    return f"已删除课程「{course}」", gr.update(choices=_build_course_choices(), value="全部")
 
 
 # ── UI ──────────────────────────────────────────────────
 
 with gr.Blocks(title="大学课程学习助手") as demo:
-    gr.Markdown("# 📚 基于RAG的大学课程学习助手")
+    gr.Markdown("# 📚 大学课程学习助手")
+
+    # ── Top toolbar ──
+    with gr.Row():
+        course_dd = gr.Dropdown(
+            label="当前课程",
+            choices=["全部"],
+            value="全部",
+            scale=3,
+            interactive=True,
+        )
+        new_course_tb = gr.Textbox(
+            label="新建课程",
+            placeholder="输入课程名...",
+            scale=2,
+        )
+        create_btn = gr.Button("创建", scale=1)
+        upload_btn = gr.UploadButton(
+            "📎 上传 PDF/PPT",
+            file_types=[".pdf", ".pptx", ".ppt"],
+            file_count="multiple",
+            scale=1,
+        )
+        delete_btn = gr.Button("🗑 删除课程", variant="stop", scale=1)
+
+    top_msg = gr.Markdown("")
+
+    # ── Chat area ──
+    chatbot = gr.Chatbot(label="对话", height=500)
 
     with gr.Row():
-        # ── left: course & document management ──
-        with gr.Column(scale=1):
-            gr.Markdown("### 课程管理")
+        msg_input = gr.Textbox(
+            label="输入你的问题",
+            placeholder="直接说人话，比如：总结第二章 / 出5道选择 / 解释死锁...",
+            scale=5,
+        )
+        send_btn = gr.Button("发送", variant="primary", scale=1)
 
-            course_name = gr.Textbox(label="新建课程名称", placeholder="如：计算机网络")
-            create_btn = gr.Button("创建课程")
-            course_radio = gr.Radio(label="已选课程", choices=["全部"], value="全部")
-            stats_display = gr.Markdown("暂无资料")
-            refresh_btn = gr.Button("刷新", size="sm")
+    # ── Quick buttons ──
+    with gr.Row():
+        quick_exam_btn = gr.Button("📝 出题练习", size="sm")
+        quick_weak_btn = gr.Button("⚠️ 薄弱点", size="sm")
+        clear_btn = gr.Button("🗑 清空对话", size="sm")
 
-            gr.Markdown("---")
-            gr.Markdown("### 上传资料")
+    # ── State ──
+    current_course_state = gr.State("全部")
 
-            file_upload = gr.File(
-                label="选择 PDF / PPT / PPTX 文件（可多选）",
-                file_types=[".pdf", ".pptx", ".ppt"],
-                file_count="multiple",
-            )
-            upload_btn = gr.Button("入库到当前课程", variant="primary")
-            upload_msg = gr.Textbox(label="操作状态", interactive=False)
+    # ── Events ──
 
-            gr.Markdown("---")
-            gr.Markdown("### 文件管理")
+    def _on_load():
+        choices = _build_course_choices()
+        return gr.update(choices=choices, value="全部"), ""
 
-            file_selector = gr.Dropdown(
-                label="课程内文件", choices=[], interactive=True,
-            )
-            delete_file_btn = gr.Button("删除此文件", variant="stop")
-            file_msg = gr.Textbox(label="文件操作状态", interactive=False)
+    demo.load(fn=_on_load, outputs=[course_dd, top_msg])
 
-            gr.Markdown("---")
-            delete_btn = gr.Button("删除整个课程", variant="stop")
-
-        # ── right: chat ──
-        with gr.Column(scale=2):
-            gr.Markdown("### 问答")
-
-            chat_course_selector = gr.Dropdown(
-                label="检索范围", choices=["全部"], value="全部",
-            )
-            chatbot = gr.Chatbot(label="对话", height=480)
-            with gr.Row():
-                msg_input = gr.Textbox(
-                    label="输入问题",
-                    placeholder="向你的知识库提问...",
-                    scale=4,
-                )
-                send_btn = gr.Button("发送", variant="primary", scale=1)
-            clear_chat_btn = gr.Button("清空对话", size="sm")
-            gr.Markdown("💡 **学习助手命令：** `/总结` `/章节 名称` `/复习` `/出题 N` `/解释 知识点` `/帮助`")
-
-    # ── event wiring ──
-
-    # page load
-    demo.load(
-        fn=refresh_ui,
-        outputs=[course_radio, chat_course_selector, stats_display, upload_msg],
-    )
-
-    # course CRUD
-    refresh_btn.click(
-        fn=refresh_ui,
-        outputs=[course_radio, chat_course_selector, stats_display, upload_msg],
-    )
+    def _create_course(name):
+        name = name.strip()
+        if not name:
+            return gr.update(), gr.update(choices=_build_course_choices()), "请输入课程名称"
+        if name == "全部":
+            return gr.update(), gr.update(choices=_build_course_choices()), "课程名不能为'全部'"
+        if name in list_courses():
+            return gr.update(), gr.update(choices=_build_course_choices()), f"课程「{name}」已存在"
+        choices = _build_course_choices()
+        return "", gr.update(choices=choices, value=name), f"✅ 课程「{name}」已创建，请上传资料"
 
     create_btn.click(
-        fn=create_course,
-        inputs=course_name,
-        outputs=[course_radio, chat_course_selector, stats_display, upload_msg],
+        fn=_create_course,
+        inputs=[new_course_tb],
+        outputs=[new_course_tb, course_dd, top_msg],
     )
 
-    upload_btn.click(
-        fn=upload_files,
-        inputs=[file_upload, course_radio],
-        outputs=[course_radio, chat_course_selector, stats_display,
-                 upload_msg, file_selector],
+    def _on_course_change(course):
+        welcome = _build_welcome(course)
+        return welcome, course
+
+    course_dd.change(
+        fn=_on_course_change,
+        inputs=[course_dd],
+        outputs=[top_msg, current_course_state],
     )
+
+    def _on_upload(files, course):
+        msg, dd_update = upload_files_handler(files, course)
+        welcome = _build_welcome(course)
+        return msg, dd_update, welcome
+
+    upload_btn.upload(
+        fn=_on_upload,
+        inputs=[upload_btn, current_course_state],
+        outputs=[top_msg, course_dd, top_msg],
+    )
+
+    def _on_delete(course):
+        msg, dd_update = delete_course_handler(course)
+        return msg, dd_update, ""
 
     delete_btn.click(
-        fn=delete_selected,
-        inputs=course_radio,
-        outputs=[course_radio, chat_course_selector, stats_display,
-                 upload_msg, file_selector],
+        fn=_on_delete,
+        inputs=[current_course_state],
+        outputs=[top_msg, course_dd, current_course_state],
     )
 
-    # file management
-    course_radio.change(
-        fn=on_course_change,
-        inputs=course_radio,
-        outputs=file_selector,
-    )
-
-    delete_file_btn.click(
-        fn=delete_file,
-        inputs=[course_radio, file_selector],
-        outputs=[file_selector, file_msg],
-    )
-
-    # chat
+    # Chat
     send_btn.click(
         fn=send_message,
-        inputs=[msg_input, chatbot, chat_course_selector],
+        inputs=[msg_input, chatbot, current_course_state],
         outputs=[chatbot, msg_input],
     )
 
     msg_input.submit(
         fn=send_message,
-        inputs=[msg_input, chatbot, chat_course_selector],
+        inputs=[msg_input, chatbot, current_course_state],
         outputs=[chatbot, msg_input],
     )
 
-    clear_chat_btn.click(
-        fn=clear_chat,
-        outputs=[chatbot, msg_input],
-    )
+    # Quick buttons
+    quick_exam_btn.click(fn=lambda: "出5道关于", outputs=[msg_input])
+    quick_weak_btn.click(fn=lambda: "我的薄弱点有哪些", outputs=[msg_input])
+    clear_btn.click(fn=clear_chat, outputs=[chatbot, msg_input])
 
 
 if __name__ == "__main__":
