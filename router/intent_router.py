@@ -13,6 +13,9 @@ import re
 
 from llm.dashscope_llm import generate
 
+_DEFAULT_EXAM_COUNT = 5
+_MAX_EXAM_COUNT = 20
+
 
 INTENT_PROMPT = """你是学习助手的意图路由器。分析用户消息，返回 JSON。
 
@@ -67,11 +70,11 @@ def _parse_slash_command(message: str) -> dict | None:
                 result["concept"] = arg if arg else None
             elif intent == "exam":
                 result["question_type"] = "mixed"
-                result["count"] = 5
+                result["count"] = _DEFAULT_EXAM_COUNT
                 if arg:
                     parts = arg.split()
                     if parts and parts[-1].isdigit():
-                        result["count"] = max(1, min(int(parts[-1]), 20))
+                        result["count"] = max(1, min(int(parts[-1]), _MAX_EXAM_COUNT))
                         parts = parts[:-1]
                     # 题型检测
                     type_map = {"选择": "choice", "选择题": "choice",
@@ -126,10 +129,13 @@ def _qa_fallback() -> dict:
 # ── 公开 API ──
 
 
-def route(message: str, course: str | None = None,
-          context_prompt: str = "") -> dict:
+def route(message: str, context_prompt: str = "") -> dict:
     """
     路由用户消息到意图。
+
+    参数:
+      message:         用户输入消息
+      context_prompt:   课程上下文（来自 memory.tracker）
 
     返回:
       {
