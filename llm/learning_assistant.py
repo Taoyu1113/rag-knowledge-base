@@ -15,81 +15,127 @@
   - 不照抄教材，用通俗语言解释
 """
 
+import os
+
 from retrieval.search import search
 from llm.dashscope_llm import generate
-from ingestion.indexer import collection
+from ingestion.indexer import list_sources
 
 
-def _get_course_chunks(course: str, max_chunks: int = 30) -> tuple[list[str], list[dict]]:
-    """获取某门课程的所有 chunk（用于总结类功能）。"""
-    # 从 ChromaDB 获取课程的所有文档
-    results = collection.get(
+def _resolve_chapter_target(course: str, target: str) -> tuple:
+    """
+    将用户输入的目标词解析为 ChromaDB 元数据过滤条件。
+
+    三层匹配策略：
+      1. 文件名匹配 — 去扩展名后做模糊匹配
+      2. section 字段匹配 — 含中阿数字归一化（"二"→"2"）
+      3. 兜底 — 返回空过滤条件，走纯语义搜索
+
+    返回:
+      (source_filter, section_filter, resolve_info_dict)
+    """
+    from ingestion.indexer import collection as _coll
+
+    target_clean = target.strip()
+    sources = list_sources(course)
+
+    def _normalize(s: str) -> str:
+        """中阿数字归一化：二→2, 十二→12"""
+        cn_map = {
+            "一": "1", "二": "2", "三": "3", "四": "4", "五": "5",
+            "六": "6", "七": "7", "八": "8", "九": "9", "十": "10",
+            "十一": "11", "十二": "12", "十三": "13", "十四": "14",
+            "十五": "15", "十六": "16", "十七": "17", "十八": "18",
+            "十九": "19", "二十": "20",
+        }
+        result = s
+        for cn in sorted(cn_map.keys(), key=len, reverse=True):
+            result = result.replace(cn, cn_map[cn])
+        return result
+
+    norm_target = _normalize(target_clean)
+
+    # ── Tier 1: 文件名匹配（含中阿数字归一化）──
+    for src in sources:
+        src_noext = os.path.splitext(src)[0]
+        norm_src = _normalize(src)
+        norm_src_noext = _normalize(src_noext)
+        if (target_clean == src or target_clean == src_noext
+            or target_clean.lower() in src.lower()
+            or src_noext.lower() in target_clean.lower()
+            or norm_target == norm_src or norm_target == norm_src_noext
+            or norm_target in norm_src or norm_src_noext in norm_target):
+            return (src, None, {
+                "matched_type": "source",
+                "matched_value": src,
+                "available_sources": sources,
+                "available_sections": [],
+            })
+
+    # ── Tier 2: section 字段匹配 ──
+    results = _coll.get(
         where={"course": course},
-        include=["documents", "metadatas"],
-        limit=max_chunks,
+        include=["metadatas"],
     )
-    docs = results.get("documents", [])
-    metas = results.get("metadatas", [])
-    return docs, metas
+    sections_set = set()
+    for meta in results.get("metadatas", []):
+        s = meta.get("section", "")
+        if s:
+            sections_set.add(s)
+
+    # 复用上面定义的 _normalize 和 norm_target
+    best_match = None
+    for sec in sections_set:
+        norm_sec = _normalize(sec)
+        if norm_target in norm_sec or norm_sec in norm_target or target_clean in sec:
+            best_match = sec
+            break
+
+    if best_match:
+        return (None, best_match, {
+            "matched_type": "section",
+            "matched_value": best_match,
+            "available_sources": sources,
+            "available_sections": sorted(sections_set),
+        })
+
+    # ── Tier 3: 兜底 ──
+    return (None, None, {
+        "matched_type": "semantic",
+        "matched_value": None,
+        "available_sources": sources,
+        "available_sections": sorted(sections_set),
+    })
 
 
-# ═══════════════════════════════════════════════════════════
-# 任务5: 课程总结
-# ═══════════════════════════════════════════════════════════
+def _build_notfound_hint(course: str, target: str, resolve_info: dict) -> str:
+    """搜不到时生成友好错误提示，列出当前课程的文件和章节。"""
+    lines = [
+        f"未在课程「{course}」中找到与「{target}」相关的内容。",
+        "",
+    ]
 
-COURSE_SUMMARY_PROMPT = """你是一位大学课程辅导老师。请根据提供的课程资料片段，生成一份完整的课程总结。
+    available_sources = resolve_info.get("available_sources", [])
+    available_sections = resolve_info.get("available_sections", [])
 
-要求：
-1. **课程概览**：一两句话描述这门课主要学什么
-2. **核心知识点**：列出5-10个最重要的知识点，每个用一句话说明
-3. **重点章节**：指出哪几章最重要，为什么
-4. **高频考点**：列出考试中最常考的内容（3-5个）
-5. **学习路线**：给出推荐的学习顺序（分阶段，如：第一阶段→第二阶段→第三阶段）
-6. **推荐复习顺序**：按重要性和难度排序
+    if available_sources:
+        lines.append("📁 **该课程包含的文件：**")
+        for s in available_sources:
+            lines.append(f"  - {s}")
 
-格式要求：使用 Markdown，标题用 ## 级别，列表清晰。
+    if available_sections:
+        lines.append("")
+        lines.append("📑 **检测到的章节标题：**")
+        for s in available_sections:
+            lines.append(f"  - {s}")
 
-注意：
-- 如果资料不足以覆盖以上所有方面，请说明"根据现有资料..."
-- 不要编造资料中没有的内容
-- 用语要适合大学生阅读"""
+    if not available_sources and not available_sections:
+        lines.append("建议：请先上传包含该章节的 PDF 资料。")
+    else:
+        lines.append("")
+        lines.append("💡 请用上面列出的文件名或章节名重新查询。")
 
-
-def generate_course_summary(course: str) -> str:
-    """
-    生成课程总结（任务5）。
-
-    参数：
-      course: 课程名称
-
-    返回：
-      Markdown 格式的课程总结
-    """
-    docs, metas = _get_course_chunks(course, max_chunks=40)
-
-    if not docs:
-        return (f"课程「{course}」暂无资料。\n\n"
-                "请先上传该课程的 PDF 教材或课件。")
-
-    # 用课程名作为查询词检索核心内容
-    overview_docs, overview_metas, _ = search(course, course=course, top_k=8, enable_mmr=True)
-    key_docs = overview_docs if overview_docs else docs
-
-    prompt = (f"课程名称：{course}\n\n"
-              f"课程资料（共 {len(docs)} 个片段，以下为关键片段）：\n\n")
-
-    for i, (doc, meta) in enumerate(zip(key_docs, overview_metas if overview_docs else metas), 1):
-        section = meta.get("section", "")
-        page = meta.get("page", 0)
-        header = f"[片段{i}]"
-        if section:
-            header += f" 章节: {section}"
-        if page:
-            header += f" 页码: {page}"
-        prompt += f"{header}\n{doc[:1500]}\n\n"
-
-    prompt += "\n请根据以上课程资料生成课程总结。"
-    return generate(prompt, key_docs, overview_metas if overview_docs else metas)
+    return "\n".join(lines)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -116,23 +162,41 @@ def generate_chapter_summary(course: str, section: str) -> str:
     """
     生成章节总结（任务6）。
 
+    三层检索策略：
+      1. 文件名匹配 → source 精确过滤
+      2. section 字段匹配 → section 精确过滤
+      3. 兜底 → 纯语义搜索
+
     参数：
       course:   课程名称
-      section:  章节名称/标题（如"红黑树"、"第三章"）
+      section:  章节名称/标题（如"红黑树"、"第三章"、"第2章"）
 
     返回：
       Markdown 格式的章节总结
     """
     if not section.strip():
-        return "请指定要总结的章节名称。\n\n示例：`章节总结：红黑树`"
+        return "请指定要总结的章节名称。\n\n示例：`/章节 红黑树`"
 
-    # 用章节名称作为查询
-    query = f"{section} 主要内容 知识点"
-    docs, metas, _ = search(query, course=course, top_k=10, enable_mmr=True)
+    # 三层匹配
+    source_filter, section_filter, resolve_info = _resolve_chapter_target(course, section)
+
+    # Tier 1/2: 精确元数据过滤
+    if source_filter or section_filter:
+        docs, metas, _ = search(
+            section,
+            course=course,
+            source=source_filter,
+            section=section_filter,
+            top_k=10,
+            enable_mmr=True,
+        )
+    else:
+        # Tier 3: 兜底语义搜索
+        query = f"{section} 主要内容 知识点"
+        docs, metas, _ = search(query, course=course, top_k=10, enable_mmr=True)
 
     if not docs:
-        return (f"未在课程「{course}」中找到与「{section}」相关的内容。\n\n"
-                f"请检查章节名称是否正确，或上传包含该章节的资料。")
+        return _build_notfound_hint(course, section, resolve_info)
 
     prompt = (f"课程：{course}\n"
               f"章节：{section}\n\n"
@@ -140,84 +204,16 @@ def generate_chapter_summary(course: str, section: str) -> str:
 
     for i, (doc, meta) in enumerate(zip(docs, metas), 1):
         page = meta.get("page", 0)
-        header = f"[片段{i}]" + (f" 页码: {page}" if page else "")
+        section_name = meta.get("section", "")
+        header = f"[片段{i}]"
+        if section_name:
+            header += f" 章节: {section_name}"
+        if page:
+            header += f" 页码: {page}"
         prompt += f"{header}\n{doc[:1500]}\n\n"
 
     prompt += f"\n请根据以上资料生成「{section}」的章节总结。"
     return generate(prompt, docs, metas)
-
-
-# ═══════════════════════════════════════════════════════════
-# 任务7: 复习提纲
-# ═══════════════════════════════════════════════════════════
-
-REVIEW_OUTLINE_PROMPT = """你是一位经验丰富的大学课程辅导老师。请根据课程资料，生成一份**考前复习提纲**。
-
-要求：
-1. **一级重点**（必考/高频）：列出3-5个最重要的知识点，每个标注掌握程度要求
-2. **二级重点**（常考/可能考）：列出5-8个次重点
-3. **学习顺序**：按重要性和知识依赖关系排列复习顺序
-4. **预计复习时间**：给每个一级/二级重点估计复习时间（如"约30分钟"）
-5. **考前建议**：给出一条最实用的考前冲刺建议
-
-格式：
-```
-## 一级重点（必考）
-| 序号 | 知识点 | 掌握要求 | 预计时间 |
-|------|--------|----------|----------|
-| 1    | ...    | ...      | ...      |
-
-## 二级重点（常考）
-| 序号 | 知识点 | 掌握要求 | 预计时间 |
-|------|--------|----------|----------|
-
-## 推荐复习顺序
-1. ...
-2. ...
-
-## 考前建议
-> ...
-```
-
-注意：
-- 只包含资料中实际出现的内容
-- 掌握要求描述要具体（如"能默写算法步骤"而非"掌握"）
-- 时间估计要合理"""
-
-
-def generate_review_outline(course: str) -> str:
-    """
-    生成复习提纲（任务7）。
-
-    参数：
-      course: 课程名称
-
-    返回：
-      Markdown 格式的复习提纲
-    """
-    docs, metas = _get_course_chunks(course, max_chunks=40)
-
-    if not docs:
-        return (f"课程「{course}」暂无资料。\n\n"
-                "请先上传该课程的 PDF 教材或课件。")
-
-    # 用"重点 考点 总结"检索关键内容
-    key_docs, key_metas, _ = search(
-        "重点 考点 总结 核心", course=course, top_k=10, enable_mmr=True,
-    )
-    use_docs = key_docs if key_docs else docs
-    use_metas = key_metas if key_docs else metas
-
-    prompt = (f"课程名称：{course}\n"
-              f"为你整理了课程资料的关键片段，请据此生成考前复习提纲：\n\n")
-
-    for i, (doc, meta) in enumerate(zip(use_docs, use_metas), 1):
-        section = meta.get("section", "")
-        header = f"[片段{i}]" + (f" ({section})" if section else "")
-        prompt += f"{header}\n{doc[:1500]}\n\n"
-
-    prompt += "\n请生成考前复习提纲。"
-    return generate(prompt, use_docs, use_metas)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -283,15 +279,31 @@ def generate_exam_questions(
     返回：
       Markdown 格式的题目列表
     """
-    # 构建查询
+    # 构建查询（有章节时走三层匹配）
     if section:
-        query = f"{section} 知识点 考点 重点"
+        source_filter, section_filter, resolve_info = _resolve_chapter_target(course, section)
+
+        if source_filter or section_filter:
+            docs, metas, _ = search(
+                f"{section} 知识点 考点 重点",
+                course=course,
+                source=source_filter,
+                section=section_filter,
+                top_k=12,
+                enable_mmr=True,
+            )
+        else:
+            query = f"{section} 知识点 考点 重点"
+            docs, metas, _ = search(query, course=course, top_k=12, enable_mmr=True)
+            resolve_info = {"available_sources": [], "available_sections": []}
     else:
         query = "重点 考点 关键概念 核心知识点"
-
-    docs, metas, _ = search(query, course=course, top_k=12, enable_mmr=True)
+        docs, metas, _ = search(query, course=course, top_k=12, enable_mmr=True)
+        resolve_info = {"available_sources": [], "available_sections": []}
 
     if not docs:
+        if section:
+            return _build_notfound_hint(course, section, resolve_info)
         return (f"课程「{course}」暂无相关资料。\n\n"
                 "请先上传该课程的 PDF 教材或课件。")
 
