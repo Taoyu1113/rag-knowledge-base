@@ -605,7 +605,10 @@ with gr.Blocks(title="课程助手") as demo:
     def _on_load():
         choices = _build_course_choices()
         welcome = _build_welcome(None)
-        return gr.update(choices=choices, value=None), welcome
+        return (
+            gr.update(choices=choices, value=None),
+            [{"role": "assistant", "content": welcome}],
+        )
 
     demo.load(fn=_on_load, outputs=[course_radio, chatbot])
 
@@ -613,7 +616,7 @@ with gr.Blocks(title="课程助手") as demo:
         if course is None:
             course = "全部"
         welcome = _build_welcome(course if course != "全部" else None)
-        return welcome, course
+        return [{"role": "assistant", "content": welcome}], course
 
     course_radio.change(
         fn=_on_course_select,
