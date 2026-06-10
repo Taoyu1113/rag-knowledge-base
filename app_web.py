@@ -630,60 +630,90 @@ with gr.Blocks(title="Echo") as demo:
 
     current_course_state = gr.State("全部")
 
-    # ── Events ──
+    # ── Events ─────────────────────────────────────────
 
     def _on_load():
         choices = _build_course_choices()
-        return gr.update(choices=choices, value="全部"), ""
+        welcome = _build_welcome(None)
+        return (
+            gr.update(choices=choices, value=None),
+            [{"role": "assistant", "content": welcome}],
+        )
 
-    demo.load(fn=_on_load, outputs=[course_dd, top_msg])
+    demo.load(fn=_on_load, outputs=[course_radio, chatbot])
+
+    # Course selection
+    def _on_course_select(course):
+        if course is None:
+            course = "全部"
+        if course == "全部":
+            welcome = _build_welcome(None)
+            return [{"role": "assistant", "content": welcome}], course
+        else:
+            info = _build_welcome(course)
+            return [{"role": "assistant", "content": info}], course
+
+    course_radio.change(
+        fn=_on_course_select,
+        inputs=[course_radio],
+        outputs=[chatbot, current_course_state],
+    )
+
+    # New course: show/hide inline input
+    def _show_new_course():
+        return gr.update(visible=False), gr.update(visible=True), ""
+
+    new_course_link.click(
+        fn=_show_new_course,
+        outputs=[new_course_link, new_course_row, new_course_tb],
+    )
+
+    def _cancel_new_course():
+        return gr.update(visible=True), gr.update(visible=False), ""
+
+    cancel_new_btn.click(
+        fn=_cancel_new_course,
+        outputs=[new_course_link, new_course_row, new_course_tb],
+    )
 
     def _create_course(name):
-        name = name.strip()
-        if not name:
-            return gr.update(), gr.update(choices=_build_course_choices()), "请输入课程名称"
-        if name == "全部":
-            return gr.update(), gr.update(choices=_build_course_choices()), "课程名不能为'全部'"
+        name = (name or "").strip()
+        if not name or name == "全部":
+            return gr.update(visible=True), gr.update(visible=False), "", gr.update()
         if name in list_courses():
-            return gr.update(), gr.update(choices=_build_course_choices()), f"课程「{name}」已存在"
+            return gr.update(visible=True), gr.update(visible=False), "", gr.update(choices=_build_course_choices(), value=name)
         choices = _build_course_choices()
-        return "", gr.update(choices=choices, value=name), f"✅ 课程「{name}」已创建，请上传资料"
+        if name not in choices:
+            choices.append(name)
+        return gr.update(visible=True), gr.update(visible=False), "", gr.update(choices=choices, value=name)
 
-    create_btn.click(
+    confirm_new_btn.click(
         fn=_create_course,
         inputs=[new_course_tb],
-        outputs=[new_course_tb, course_dd, top_msg],
+        outputs=[new_course_link, new_course_row, new_course_tb, course_radio],
     )
 
-    def _on_course_change(course):
-        welcome = _build_welcome(course)
-        return welcome, course
-
-    course_dd.change(
-        fn=_on_course_change,
-        inputs=[course_dd],
-        outputs=[top_msg, current_course_state],
+    new_course_tb.submit(
+        fn=_create_course,
+        inputs=[new_course_tb],
+        outputs=[new_course_link, new_course_row, new_course_tb, course_radio],
     )
 
-    def _on_upload(files, course):
-        msg, dd_update = upload_files_handler(files, course)
-        welcome = _build_welcome(course)
-        return msg, dd_update, welcome
+    # Upload
+    def _on_upload(files):
+        course = current_course_state.value
+        if not course or course == "全部":
+            return "请先在左侧选择一个课程，再上传文件", gr.update()
+        try:
+            msg, radio_update = upload_files_handler(files, course)
+            return msg or "上传完成", radio_update
+        except Exception as e:
+            return f"上传失败: {e}", gr.update()
 
     upload_btn.upload(
         fn=_on_upload,
-        inputs=[upload_btn, current_course_state],
-        outputs=[top_msg, course_dd, top_msg],
-    )
-
-    def _on_delete(course):
-        msg, dd_update = delete_course_handler(course)
-        return msg, dd_update, ""
-
-    delete_btn.click(
-        fn=_on_delete,
-        inputs=[current_course_state],
-        outputs=[top_msg, course_dd, current_course_state],
+        inputs=[upload_btn],
+        outputs=[msg_input, course_radio],
     )
 
     # Chat
@@ -698,11 +728,6 @@ with gr.Blocks(title="Echo") as demo:
         inputs=[msg_input, chatbot, current_course_state],
         outputs=[chatbot, msg_input],
     )
-
-    # Quick buttons
-    quick_exam_btn.click(fn=lambda: "出5道关于", outputs=[msg_input])
-    quick_weak_btn.click(fn=lambda: "我的薄弱点有哪些", outputs=[msg_input])
-    clear_btn.click(fn=clear_chat, outputs=[chatbot, msg_input])
 
 
 if __name__ == "__main__":
