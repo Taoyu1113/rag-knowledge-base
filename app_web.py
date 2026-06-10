@@ -732,4 +732,10 @@ with gr.Blocks(title="Echo") as demo:
 
 if __name__ == "__main__":
     demo.queue(default_concurrency_limit=10)
-    demo.launch(ssr_mode=False)
+    demo.launch(
+        ssr_mode=False,
+        css=CUSTOM_CSS,
+        theme=gr.themes.Base(
+            font=gr.themes.GoogleFont("Inter"),
+        ),
+    )
