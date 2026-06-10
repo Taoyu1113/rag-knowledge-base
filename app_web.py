@@ -562,52 +562,72 @@ def delete_course_handler(course):
 
 # ── UI ──────────────────────────────────────────────────
 
-with gr.Blocks(title="大学课程学习助手") as demo:
-    gr.Markdown("# 📚 大学课程学习助手")
+# =============================================================
+#  UI — ChatGPT Workspace Layout
+# =============================================================
 
-    # ── Top toolbar ──
-    with gr.Row():
-        course_dd = gr.Dropdown(
-            label="当前课程",
-            choices=["全部"],
-            value="全部",
-            scale=3,
+with gr.Blocks(title="Echo") as demo:
+
+    # ── Sidebar (240px, course list only) ──────────────
+
+    with gr.Column(elem_classes=["sidebar"]):
+        gr.HTML(
+            '<div style="font-size:14px;font-weight:600;color:rgba(0,0,0,0.85);'
+            'padding:4px 0;margin-bottom:20px;">Echo</div>'
+        )
+
+        course_radio = gr.Radio(
+            label="课程",
+            choices=[],
+            value=None,
             interactive=True,
+            elem_id="course-list",
         )
-        new_course_tb = gr.Textbox(
-            label="新建课程",
-            placeholder="输入课程名...",
-            scale=2,
+
+        # New course: inline expand
+        new_course_link = gr.Button(
+            "+ 新建课程", variant="secondary", size="sm",
+            visible=True,
         )
-        create_btn = gr.Button("创建", scale=1)
-        upload_btn = gr.UploadButton(
-            "📎 上传 PDF/PPT",
-            file_types=[".pdf", ".pptx", ".ppt"],
-            file_count="multiple",
-            scale=1,
+        with gr.Row(visible=False) as new_course_row:
+            new_course_tb = gr.Textbox(
+                placeholder="课程名称",
+                scale=1,
+                show_label=False,
+            )
+            cancel_new_btn = gr.Button("取消", size="sm", scale=0)
+            confirm_new_btn = gr.Button("创建", variant="primary", size="sm", scale=0)
+
+    # ── Main area ─────────────────────────────────────
+
+    with gr.Column(elem_classes=["main-area"]):
+        chatbot = gr.Chatbot(
+            label="",
+            height="100%",
+            elem_classes=["chatbot"],
+            show_label=False,
+            value=[],
         )
-        delete_btn = gr.Button("🗑 删除课程", variant="stop", scale=1)
 
-    top_msg = gr.Markdown("")
+        with gr.Row(elem_classes=["composer-wrap"]):
+            upload_btn = gr.UploadButton(
+                "+",
+                file_types=[".pdf", ".pptx", ".ppt"],
+                file_count="multiple",
+                variant="secondary",
+                elem_id="upload-btn",
+                size="sm",
+            )
+            msg_input = gr.Textbox(
+                label="",
+                placeholder="输入你的问题...",
+                scale=1,
+                elem_id="msg-input",
+            )
+            send_btn = gr.Button("发送", variant="primary", elem_id="send-btn")
 
-    # ── Chat area ──
-    chatbot = gr.Chatbot(label="对话", height=500)
+    # ── State ─────────────────────────────────────────
 
-    with gr.Row():
-        msg_input = gr.Textbox(
-            label="输入你的问题",
-            placeholder="直接说人话，比如：总结第二章 / 出5道选择 / 解释死锁...",
-            scale=5,
-        )
-        send_btn = gr.Button("发送", variant="primary", scale=1)
-
-    # ── Quick buttons ──
-    with gr.Row():
-        quick_exam_btn = gr.Button("📝 出题练习", size="sm")
-        quick_weak_btn = gr.Button("⚠️ 薄弱点", size="sm")
-        clear_btn = gr.Button("🗑 清空对话", size="sm")
-
-    # ── State ──
     current_course_state = gr.State("全部")
 
     # ── Events ──
