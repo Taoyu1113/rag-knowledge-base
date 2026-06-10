@@ -209,15 +209,24 @@ def _build_course_choices():
 
 
 def _build_welcome(course: str | None) -> str:
-    """生成切换课程后的欢迎消息。"""
+    """Generate ChatGPT-style welcome with clickable example prompts."""
     if not course or course == "全部":
+        examples = [
+            "总结一下课程的主要内容",
+            "出5道选择题测试我的理解",
+            "解释一下课程的核心概念",
+            "查看我的薄弱点",
+        ]
+        items = "\n".join(
+            f'<div class="example-item" onclick="var t=document.querySelector(\'#msg-input textarea\');if(t){{t.value=\'{ex}\';t.dispatchEvent(new Event(\'input\',{{bubbles:true}}));t.focus();}}">{ex}</div>'
+            for ex in examples
+        )
         return (
-            "## 📚 欢迎使用大学课程学习助手\n\n"
-            "请选择一个课程，或上传 PDF 课件开始学习。\n\n"
-            "💡 你可以直接输入问题，比如：\n"
-            '- "总结一下第一章"\n'
-            '- "出5道选择题"\n'
-            '- "解释死锁的概念"'
+            '<div style="text-align:center;">'
+            '<div style="font-size:18px;font-weight:500;color:rgba(0,0,0,0.8);margin-bottom:6px;">今天想学什么？</div>'
+            '<div style="font-size:14px;color:rgba(0,0,0,0.35);margin-bottom:24px;">选择示例问题或直接输入你想了解的内容</div>'
+            + items +
+            '</div>'
         )
 
     from ingestion.indexer import list_sections
@@ -225,19 +234,18 @@ def _build_welcome(course: str | None) -> str:
     sections = list_sections(course)
     memory = get_summary(course)
 
-    lines = [f"## 📖 {course}\n"]
+    lines = [f"{course}"]
     lines.append(f"已上传 {len(sources)} 个文件。")
 
     if sections:
-        lines.append("\n**检测到的章节：**")
+        lines.append("\n检测到的章节：")
         for s in sections:
-            learned = " ✅" if s in memory.get("chapters_learned", []) else ""
-            lines.append(f"- {s}{learned}")
+            learned = " ✓" if s in memory.get("chapters_learned", []) else ""
+            lines.append(f"  {s}{learned}")
 
     if memory.get("weak_count", 0) > 0:
-        lines.append(f"\n⚠️ {memory['weak_count']} 个薄弱知识点待加强。")
+        lines.append(f"\n{memory['weak_count']} 个薄弱知识点待加强。")
 
-    lines.append('\n💡 你可以直接说："总结第二章" / "出5道选择" / "解释关键概念"')
     return "\n".join(lines)
 
 
