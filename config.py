@@ -57,3 +57,7 @@ RERANK_MODEL = "gte-rerank"    # DashScope Rerank 模型
 RERANK_ENABLED = True          # 是否启用 Rerank
 RERANK_TOP_N = 5               # Rerank 后返回的结果数
 RERANK_CANDIDATE_K = 20        # Embedding 初检数量（送入 Rerank 的候选数）
+
+# ── 精确过滤时的相似度阈值 ──
+FILTERED_MIN_SCORE = 0.1        # 当通过 source/section 精确过滤时使用更低阈值
+FILTERED_MIN_SCORE_RATIO = 0.4  # 过滤模式下 min_score 乘以该系数，不低于 0.1

@@ -1,0 +1,72 @@
+<h2>空状态 → 对话：如何过渡？</h2>
+<p class="subtitle">学生打开页面看到欢迎语。发送第一条消息后，欢迎语消失，对话流开始。这个过渡怎么做？<br><strong style="color:#ef4444;">上次实现中，Overlay 方案彻底失败——挡住了输入框。</strong></p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>欢迎语作为 Chatbot 第一条消息（推荐）</h3>
+      <p>欢迎语直接放在 Chatbot 的 value 里：<code>[{"role": "assistant", "content": welcome_html}]</code>。学生发消息后，chat_history 正常追加。Chatbot 使用 <code>justify-content: center</code> 在只有一条消息时居中，多条消息时从顶部开始。</p>
+      <p style="color:rgba(0,0,0,0.45);font-size:13px;margin-top:8px;">
+        <strong>优点：</strong>不需要 overlay、不需要 z-index、不需要 DOM 操作。Gradio 原生支持。上次修复验证可行。<br>
+        <strong>缺点：</strong>欢迎语和真实消息在同一个容器里，CSS 需要用 :only-child 或 :has() 区分居中/顶对齐。
+      </p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>CSS :has() 控制可见性</h3>
+      <p>欢迎区是一个独立的 div，放在 Chatbot 上方。用 CSS <code>.chat-area:has(.message) ~ #welcome { display: none }</code> 在有消息时自动隐藏。</p>
+      <p style="color:rgba(0,0,0,0.45);font-size:13px;margin-top:8px;">
+        <strong>优点：</strong>欢迎区和对话区物理分离，CSS 更干净。<br>
+        <strong>缺点：</strong>Gradio 的 Svelte 渲染 DOM 结构不可控，:has() 选择器可能找不到正确的元素。上次 overlay 方案就是因此失败的。
+      </p>
+    </div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-top:28px;">
+  <div class="mockup-header">方案 A 示意：欢迎语在 Chatbot 内，单条消息居中，多条顶对齐</div>
+  <div class="mockup-body" style="padding:0;display:flex;font-family:system-ui;font-size:12px;">
+    <!-- Left: empty state -->
+    <div style="flex:1;border-right:1px dashed rgba(0,0,0,0.1);padding:24px;">
+      <div style="font-size:11px;color:rgba(0,0,0,0.3);text-align:center;margin-bottom:12px;">空状态（0条用户消息）</div>
+      <div style="border:1px solid rgba(0,0,0,0.06);border-radius:8px;height:300px;display:flex;flex-direction:column;justify-content:center;align-items:center;background:#fafafa;">
+        <div style="text-align:center;">
+          <div style="font-size:16px;font-weight:500;color:rgba(0,0,0,0.85);margin-bottom:6px;">今天想学什么？</div>
+          <div style="font-size:13px;color:rgba(0,0,0,0.35);margin-bottom:20px;">选择示例问题或直接输入</div>
+          <div style="font-size:13px;color:rgba(0,0,0,0.35);padding:5px 0;">总结一下课程的主要内容</div>
+          <div style="font-size:13px;color:rgba(0,0,0,0.35);padding:5px 0;">出5道选择题测试我的理解</div>
+          <div style="font-size:13px;color:rgba(0,0,0,0.35);padding:5px 0;">解释一下课程的核心概念</div>
+        </div>
+      </div>
+      <div style="font-size:10px;color:rgba(0,0,0,0.25);text-align:center;margin-top:8px;">justify-content: center</div>
+    </div>
+    <!-- Right: conversation started -->
+    <div style="flex:1;padding:24px;">
+      <div style="font-size:11px;color:rgba(0,0,0,0.3);text-align:center;margin-bottom:12px;">对话开始后（≥1条用户消息）</div>
+      <div style="border:1px solid rgba(0,0,0,0.06);border-radius:8px;height:300px;display:flex;flex-direction:column;background:#fafafa;overflow:hidden;">
+        <div style="flex:1;overflow-y:auto;padding:16px;">
+          <div style="display:flex;justify-content:flex-end;margin-bottom:12px;">
+            <div style="background:rgba(0,0,0,0.04);padding:8px 12px;border-radius:16px 16px 4px 16px;max-width:70%;font-size:13px;color:rgba(0,0,0,0.85);">总结一下课程内容</div>
+          </div>
+          <div style="display:flex;margin-bottom:12px;">
+            <div style="padding:8px 12px;max-width:85%;font-size:13px;color:rgba(0,0,0,0.85);line-height:1.6;">
+              本课程主要涵盖以下内容：<br>1. 基础概念与定义<br>2. 核心定理与推导<br>3. 应用与案例分析...
+            </div>
+          </div>
+        </div>
+        <div style="border-top:1px solid rgba(0,0,0,0.06);padding:12px;">
+          <div style="display:flex;align-items:center;border:1px solid rgba(0,0,0,0.12);border-radius:20px;padding:4px 8px 4px 12px;">
+            <span style="color:rgba(0,0,0,0.2);margin-right:4px;">+</span>
+            <input placeholder="输入你的问题..." style="flex:1;border:none;outline:none;font-size:14px;padding:8px 4px;background:transparent;">
+            <button style="background:rgba(0,0,0,0.85);color:#fff;border:none;border-radius:16px;padding:6px 14px;font-size:11px;">发送</button>
+          </div>
+        </div>
+      </div>
+      <div style="font-size:10px;color:rgba(0,0,0,0.25);text-align:center;margin-top:8px;">justify-content: flex-start（默认）</div>
+    </div>
+  </div>
+</div>

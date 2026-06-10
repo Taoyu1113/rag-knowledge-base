@@ -6,6 +6,7 @@ from config import (
     MMR_LAMBDA, MMR_DEDUP_THRESHOLD,
     RERANK_ENABLED, RERANK_TOP_N, RERANK_CANDIDATE_K,
     DYNAMIC_TOPK, TOPK_SIMPLE, TOPK_NORMAL, TOPK_COMPLEX,
+    FILTERED_MIN_SCORE, FILTERED_MIN_SCORE_RATIO,
 )
 
 client = chromadb.PersistentClient(path=CHROMA_PATH)
@@ -74,8 +75,21 @@ def _estimate_query_complexity(query: str) -> int:
 
 
 def _to_similarity(distance: float) -> float:
-    """将 ChromaDB 的 cosine distance 转换为相似度 (0~1)。"""
-    return 1.0 - distance
+    """
+    将 ChromaDB 返回的 distance 转换为相似度 (0~1)。
+
+    根据 collection 的距离度量自动选择转换公式：
+      - cosine: distance ∈ [0, 2], sim = 1 - distance          (范围 [-1, 1])
+      - l2:     distance ∈ [0, ∞),  sim = 1 / (1 + distance)   (范围 (0, 1])
+    """
+    coll_meta = collection.metadata or {}
+    space = coll_meta.get("hnsw:space", "l2")
+
+    if space == "cosine":
+        return 1.0 - distance
+    else:
+        # L2 / IP (内积) 等非 cosine 度量，用归一化公式
+        return 1.0 / (1.0 + distance)
 
 
 def _jaccard_similarity(text_a: str, text_b: str, n: int = 3) -> float:
@@ -186,11 +200,36 @@ def _simple_dedup(docs, metas, scores, threshold=MMR_DEDUP_THRESHOLD):
     return kept_docs, kept_metas, kept_scores
 
 
+def _build_where_clause(course=None, source=None, section=None):
+    """
+    构建 ChromaDB where 条件，支持多条件 $and 组合。
+
+    所有参数均为可选；返回 None 表示无需过滤。
+    """
+    conditions = []
+    if course:
+        conditions.append({"course": course})
+    if source:
+        conditions.append({"source": source})
+    if section:
+        conditions.append({"section": section})
+
+    if len(conditions) == 0:
+        return None
+    elif len(conditions) == 1:
+        return conditions[0]
+    else:
+        return {"$and": conditions}
+
+
 def search(
     query,
     course=None,
+    source=None,
+    section=None,
     top_k=TOP_K,
     min_score=MIN_SCORE,
+    dynamic_min_score=True,
     enable_mmr=True,
     mmr_lambda=MMR_LAMBDA,
     enable_rerank=RERANK_ENABLED,
@@ -207,8 +246,11 @@ def search(
     参数：
       query:        查询文本
       course:       课程过滤（None 表示所有课程）
+      source:       文件名过滤（如 "第2章.pdf"），精确匹配
+      section:      章节标题过滤（如 "第二章 进程管理"），精确匹配
       top_k:        最终返回的结果数量
       min_score:    最低相似度阈值（0~1）
+      dynamic_min_score: 精确过滤时自动降低 min_score 阈值
       enable_mmr:   是否启用 MMR 去重
       mmr_lambda:   MMR 参数（0~1）
       enable_rerank:是否启用 Rerank
@@ -229,8 +271,9 @@ def search(
         include=["documents", "metadatas", "distances"],
     )
 
-    if course:
-        kwargs["where"] = {"course": course}
+    where_clause = _build_where_clause(course=course, source=source, section=section)
+    if where_clause:
+        kwargs["where"] = where_clause
 
     results = collection.query(**kwargs)
 
@@ -239,13 +282,18 @@ def search(
     distances = results["distances"][0]
 
     # ── Step 1: 转换为相似度并过滤 ──
+    # 精确过滤时使用更低的阈值（元数据已保证相关性）
+    effective_min_score = min_score
+    if dynamic_min_score and (source or section):
+        effective_min_score = max(min_score * FILTERED_MIN_SCORE_RATIO, FILTERED_MIN_SCORE)
+
     filtered_docs = []
     filtered_metas = []
     filtered_scores = []
 
     for doc, meta, dist in zip(docs, metas, distances):
         sim = _to_similarity(dist)
-        if sim >= min_score:
+        if sim >= effective_min_score:
             filtered_docs.append(doc)
             filtered_metas.append(meta)
             filtered_scores.append(sim)

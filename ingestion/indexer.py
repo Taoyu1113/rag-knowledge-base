@@ -8,10 +8,55 @@ from ingestion.embedder import get_embedding
 from config import CHROMA_PATH, COLLECTION_NAME
 
 client = chromadb.PersistentClient(path=CHROMA_PATH)
-collection = client.get_or_create_collection(
-    name=COLLECTION_NAME,
-    metadata={"hnsw:space": "cosine"},
-)
+
+
+def _ensure_collection():
+    """
+    确保 collection 使用 cosine 距离度量。
+
+    如果旧 collection 使用了 L2 距离（默认），自动迁移数据到
+    新建的 cosine collection，保证 _to_similarity 的转换逻辑正确。
+    """
+    try:
+        coll = client.get_collection(COLLECTION_NAME)
+        meta = coll.metadata
+        if meta and meta.get("hnsw:space") == "cosine":
+            return coll
+
+        # ── 需要迁移 ──
+        print("⚠️  检测到旧 collection (非 cosine 距离)，正在迁移...")
+
+        # 读取全部现有数据（含 embeddings 便于重建）
+        all_data = coll.get(
+            include=["documents", "metadatas", "embeddings"],
+        )
+        n = len(all_data.get("ids", []))
+        client.delete_collection(COLLECTION_NAME)
+
+        new_coll = client.create_collection(
+            name=COLLECTION_NAME,
+            metadata={"hnsw:space": "cosine"},
+        )
+
+        if n > 0:
+            new_coll.add(
+                documents=all_data["documents"],
+                metadatas=all_data["metadatas"],
+                embeddings=all_data["embeddings"],
+                ids=all_data["ids"],
+            )
+        print(f"✅ 迁移完成 ({n} chunks 已转换到 cosine 距离)")
+        return new_coll
+
+    except Exception:
+        # 集合不存在 → 新建
+        return client.create_collection(
+            name=COLLECTION_NAME,
+            metadata={"hnsw:space": "cosine"},
+        )
+
+
+collection = _ensure_collection()
 
 
 def index_chunks(chunks, course="默认", source="unknown", chunk_metas=None):
@@ -93,6 +138,17 @@ def list_sources(course):
         if "source" in meta:
             sources.add(meta["source"])
     return sorted(sources)
+
+
+def list_sections(course):
+    """列出某课程中所有检测到的章节标题（去重排序）。"""
+    result = collection.get(where={"course": course}, include=["metadatas"])
+    sections = set()
+    for meta in result.get("metadatas", []):
+        s = meta.get("section", "")
+        if s:
+            sections.add(s)
+    return sorted(sections)
 
 
 def get_source_count(course, source):
