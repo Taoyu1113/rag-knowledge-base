@@ -575,6 +575,30 @@ with gr.Blocks(title="Echo") as demo:
             '<div style="font-size:14px;font-weight:600;color:rgba(0,0,0,0.85);'
             'padding:4px 0;margin-bottom:20px;">Echo</div>'
         )
+        gr.HTML("""
+        <div id="course-menu" style="position:fixed;z-index:9999;background:#fff;border:1px solid rgba(0,0,0,0.12);border-radius:8px;padding:4px;box-shadow:0 4px 16px rgba(0,0,0,0.08);display:none;min-width:160px;">
+          <div class="menu-item" style="padding:6px 12px;font-size:13px;color:rgba(0,0,0,0.55);border-radius:4px;cursor:pointer;" onmouseover="this.style.background='rgba(0,0,0,0.04)'" onmouseout="this.style.background='transparent'">上传文件</div>
+          <div class="menu-item" style="padding:6px 12px;font-size:13px;color:rgba(0,0,0,0.55);border-radius:4px;cursor:pointer;" onmouseover="this.style.background='rgba(0,0,0,0.04)'" onmouseout="this.style.background='transparent'">重命名</div>
+          <div style="height:1px;background:rgba(0,0,0,0.06);margin:2px 0;"></div>
+          <div class="menu-item danger" style="padding:6px 12px;font-size:13px;color:rgba(220,38,38,0.85);border-radius:4px;cursor:pointer;" onmouseover="this.style.background='rgba(0,0,0,0.04)'" onmouseout="this.style.background='transparent'">删除课程</div>
+        </div>
+        <script>
+        (function() {
+          var menu = document.getElementById('course-menu');
+          document.addEventListener('contextmenu', function(e) {
+            var label = e.target.closest('label');
+            if (!label || !label.closest('#course-list')) return;
+            e.preventDefault();
+            menu.style.display = 'block';
+            menu.style.left = e.clientX + 'px';
+            menu.style.top = e.clientY + 'px';
+          });
+          document.addEventListener('click', function() {
+            menu.style.display = 'none';
+          });
+        })();
+        </script>
+        """)
 
         course_radio = gr.Radio(
             label="课程",
@@ -597,6 +621,8 @@ with gr.Blocks(title="Echo") as demo:
             )
             cancel_new_btn = gr.Button("取消", size="sm", scale=0)
             confirm_new_btn = gr.Button("创建", variant="primary", size="sm", scale=0)
+
+        delete_btn = gr.Button("删除课程", variant="secondary", size="sm", visible=False)
 
     # ── Main area ─────────────────────────────────────
 
@@ -659,6 +685,15 @@ with gr.Blocks(title="Echo") as demo:
         outputs=[chatbot, current_course_state],
     )
 
+    def _toggle_delete_btn(course):
+        return gr.update(visible=course is not None and course != "全部")
+
+    course_radio.change(
+        fn=_toggle_delete_btn,
+        inputs=[course_radio],
+        outputs=[delete_btn],
+    )
+
     # New course: show/hide inline input
     def _show_new_course():
         return gr.update(visible=False), gr.update(visible=True), ""
@@ -714,6 +749,20 @@ with gr.Blocks(title="Echo") as demo:
         fn=_on_upload,
         inputs=[upload_btn],
         outputs=[msg_input, course_radio],
+    )
+
+    # Delete course
+    def _on_delete(course):
+        if not course or course == "全部":
+            return gr.update(), gr.update(visible=False)
+        msg, dd_update = delete_course_handler(course)
+        welcome = _build_welcome(None)
+        return dd_update, [{"role": "assistant", "content": welcome}], gr.update(visible=False)
+
+    delete_btn.click(
+        fn=_on_delete,
+        inputs=[current_course_state],
+        outputs=[course_radio, chatbot, delete_btn],
     )
 
     # Chat
