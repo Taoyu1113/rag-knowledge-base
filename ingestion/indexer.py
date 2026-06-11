@@ -24,7 +24,7 @@ def _ensure_collection():
             return coll
 
         # ── 需要迁移 ──
-        print("⚠️  检测到旧 collection (非 cosine 距离)，正在迁移...")
+        print("[警告] 检测到旧 collection (非 cosine 距离)，正在迁移...")
 
         # 读取全部现有数据（含 embeddings 便于重建）
         all_data = coll.get(
@@ -45,7 +45,7 @@ def _ensure_collection():
                 embeddings=all_data["embeddings"],
                 ids=all_data["ids"],
             )
-        print(f"✅ 迁移完成 ({n} chunks 已转换到 cosine 距离)")
+        print(f"[完成] 迁移完成 ({n} chunks 已转换到 cosine 距离)")
         return new_coll
 
     except Exception:

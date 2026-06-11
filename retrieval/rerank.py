@@ -138,6 +138,6 @@ if __name__ == "__main__":
             idx = r["index"]
             score = r.get("relevance_score", 0)
             print(f"  [{idx}] score={score:.4f} → {test_docs[idx][:60]}")
-        print("\n✅ Rerank 模块工作正常")
+        print("\n[OK] Rerank 模块工作正常")
     except Exception as e:
         print(f"Rerank 测试失败（可能需要有效的 API Key）: {e}")
