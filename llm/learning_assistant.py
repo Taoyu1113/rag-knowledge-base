@@ -119,13 +119,13 @@ def _build_notfound_hint(course: str, target: str, resolve_info: dict) -> str:
     available_sections = resolve_info.get("available_sections", [])
 
     if available_sources:
-        lines.append("📁 **该课程包含的文件：**")
+        lines.append("**该课程包含的文件：**")
         for s in available_sources:
             lines.append(f"  - {s}")
 
     if available_sections:
         lines.append("")
-        lines.append("📑 **检测到的章节标题：**")
+        lines.append("**检测到的章节标题：**")
         for s in available_sections:
             lines.append(f"  - {s}")
 
@@ -133,7 +133,7 @@ def _build_notfound_hint(course: str, target: str, resolve_info: dict) -> str:
         lines.append("建议：请先上传包含该章节的 PDF 资料。")
     else:
         lines.append("")
-        lines.append("💡 请用上面列出的文件名或章节名重新查询。")
+        lines.append("**提示：** 请用上面列出的文件名或章节名重新查询。")
 
     return "\n".join(lines)
 
@@ -155,7 +155,10 @@ CHAPTER_SUMMARY_PROMPT = """你是一位大学课程辅导老师。请根据提�
 
 注意：
 - 如果资料中找不到指定章节，请明确说明
-- 不要编造资料中没有的内容"""
+- 不要编造资料中没有的内容
+- 回答末尾请标注信息来源：
+  - 📖 **来自课件**的内容
+  - 💡 **补充扩展**的内容（如有）"""
 
 
 def generate_chapter_summary(course: str, section: str) -> str:
@@ -235,29 +238,32 @@ EXAM_QUESTIONS_PROMPT = """你是一位大学课程出题老师。请根据提�
 
 **1. [题目]**
 A. ...  B. ...  C. ...  D. ...
-> ✅ 答案：X
-> 📖 解析：...
-> 📂 来源：[章节名]
+> 答案：X
+> 解析：...
+> 来源：[章节名]
 
 ## 判断题
 
 **1. [题目]**
-> ✅ 答案：正确/错误
-> 📖 解析：...
-> 📂 来源：[章节名]
+> 答案：正确/错误
+> 解析：...
+> 来源：[章节名]
 
 ## 简答题
 
 **1. [题目]**
-> ✅ 参考答案：...
-> 📖 解析：...
-> 📂 来源：[章节名]
+> 参考答案：...
+> 解析：...
+> 来源：[章节名]
 ```
 
 注意：
 - 题目要覆盖不同难度层次
 - 解析要详细，帮助学生理解为什么对/错
-- 不要出资料中没有的题目"""
+- 不要出资料中没有的题目
+- 每道题请标注信息来源：
+  - 📖 **来自课件**的题目
+  - 💡 **补充扩展**的题目（如有）"""
 
 
 def generate_exam_questions(
@@ -356,7 +362,11 @@ EXPLAIN_CONCEPT_PROMPT = """你是一位善于讲课的大学助教。你的任�
 注意：
 - 如果课程资料包含该知识点的解释，引用并展开
 - 如果资料不完整，基于你的知识补充，但要注明哪些来自资料、哪些来自补充
-- 语言要亲切自然，像学长/学姐在给你讲题"""
+- 语言要亲切自然，像学长/学姐在给你讲题
+- 回答末尾请明确标注信息来源：
+  - 📖 **来自课件**：引用资料中的定义和解释
+  - 💡 **补充知识**：基于AI通用知识的补充
+- 如果课程资料不包含该知识点，请明确说明并基于通用知识解释。"""
 
 
 def explain_concept(course: str, concept: str, style: str = "通俗") -> str:

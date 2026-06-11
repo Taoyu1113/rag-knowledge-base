@@ -26,179 +26,6 @@ from utils.text_clean import clean_text
 from utils.ppt_converter import convert_pptx_to_pdf
 from storage.learning_log import save_record, get_history
 
-# =============================================================
-#  Custom CSS — ChatGPT Workspace (pure black & white)
-# =============================================================
-
-CUSTOM_CSS = """
-:root {
-  --text-strong:  rgba(0,0,0,0.85);
-  --text-base:    rgba(0,0,0,0.55);
-  --text-weak:    rgba(0,0,0,0.35);
-  --border-light: rgba(0,0,0,0.06);
-  --border-input: rgba(0,0,0,0.12);
-  --border-focus: rgba(0,0,0,0.22);
-  --bg:           #ffffff;
-  --sidebar-width: 240px;
-  --content-width: 820px;
-}
-
-*, *::before, *::after { box-sizing: border-box; }
-
-body {
-  font-family: "Inter", system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  font-size: 15px;
-  color: var(--text-strong);
-  background: var(--bg);
-  -webkit-font-smoothing: antialiased;
-  margin: 0;
-  overflow: hidden;
-}
-
-/* ── Strip Gradio defaults ──────────────────────────── */
-.gradio-container { max-width: none !important; margin: 0 !important; padding: 0 !important; }
-footer, .versions, #footer, .watermark, .built-with { display: none !important; }
-
-/* ── Sidebar — 240px fixed, course list only ────────── */
-.sidebar {
-  position: fixed !important; left: 0 !important; top: 0 !important;
-  width: var(--sidebar-width) !important; height: 100vh !important;
-  background: var(--bg) !important;
-  border-right: 1px solid var(--border-light) !important;
-  padding: 24px 20px !important; overflow-y: auto !important; z-index: 10 !important;
-  display: flex !important; flex-direction: column !important; gap: 0 !important;
-}
-.sidebar * { font-family: inherit !important; background: transparent !important; box-shadow: none !important; }
-.sidebar label { font-size: 11px !important; font-weight: 500 !important; color: var(--text-weak) !important; }
-.sidebar input, .sidebar textarea {
-  font-size: 13px !important; color: var(--text-strong) !important;
-  background: var(--bg) !important;
-  border: 1px solid var(--border-light) !important; border-radius: 6px !important;
-}
-.sidebar button {
-  font-size: 13px !important; font-weight: 400 !important;
-  border-radius: 6px !important; color: var(--text-base) !important;
-}
-
-/* ── Main area ──────────────────────────────────────── */
-.main-area {
-  margin-left: var(--sidebar-width) !important; display: flex !important;
-  flex-direction: column !important; height: 100vh !important;
-  background: var(--bg) !important;
-}
-.main-area * { font-family: inherit !important; }
-
-/* ── Chatbot — transparent, center welcome, top-align chat ─ */
-.chatbot {
-  border: none !important; border-radius: 0 !important;
-  background: transparent !important; box-shadow: none !important;
-  flex: 1 !important; overflow-y: auto !important; padding: 0 !important;
-  display: flex !important; flex-direction: column !important;
-  justify-content: center !important;
-}
-.chatbot * { background: transparent !important; border: none !important; box-shadow: none !important; border-radius: 0 !important; }
-.chatbot .message {
-  font-size: 15px !important; line-height: 1.625 !important;
-  color: var(--text-strong) !important;
-  max-width: var(--content-width) !important; width: 100% !important;
-  margin: 0 auto !important; padding: 0 24px !important;
-}
-.chatbot .bubble-wrap { padding: 8px 0 !important; margin: 0 !important; }
-.chatbot .user .bubble-wrap { color: var(--text-base) !important; }
-.chatbot .bot .bubble-wrap { color: var(--text-strong) !important; }
-
-/* ── Message markdown ───────────────────────────────── */
-.chatbot .message-wrap h1 { font-size: 1.05rem; font-weight: 600; color: var(--text-strong); }
-.chatbot .message-wrap h2 { font-size: 1rem; font-weight: 600; color: var(--text-strong); }
-.chatbot .message-wrap h3 { font-size: 0.9375rem; font-weight: 600; color: var(--text-strong); }
-.chatbot .message-wrap p, .chatbot .message-wrap div { color: var(--text-strong); }
-.chatbot .message-wrap pre {
-  border: 1px solid var(--border-light) !important; border-radius: 6px !important;
-  padding: 12px 16px; overflow-x: auto;
-}
-.chatbot .message-wrap blockquote {
-  border-left: 2px solid rgba(0,0,0,0.12); padding-left: 12px;
-  margin-left: 0; color: var(--text-base);
-}
-.chatbot .message-wrap details {
-  margin-top: 12px; padding: 0; font-size: 0.8125rem; color: rgba(0,0,0,0.45);
-}
-.chatbot .message-wrap details summary { cursor: pointer; color: rgba(0,0,0,0.45); font-weight: 500; }
-.chatbot .message-wrap ul, .chatbot .message-wrap ol { padding-left: 1.25em; }
-.chatbot .message-wrap li { margin: 2px 0; }
-
-/* ── Example prompts in welcome ─────────────────────── */
-.example-item {
-  font-size: 14px; color: var(--text-weak); padding: 7px 0;
-  cursor: pointer; text-align: center; transition: color 0.15s; user-select: none;
-}
-.example-item:hover { color: var(--text-base); }
-
-/* ── Composer — pill container ──────────────────────── */
-.composer-wrap {
-  flex-shrink: 0 !important;
-  max-width: var(--content-width) !important;
-  margin: 0 auto 24px !important; width: 100% !important;
-  display: flex !important; gap: 4px !important;
-  align-items: center !important;
-  border: 1px solid var(--border-input) !important;
-  border-radius: 28px !important; background: var(--bg) !important;
-  padding: 4px 8px 4px 4px !important;
-}
-.composer-wrap:focus-within { border-color: var(--border-focus) !important; }
-.composer-wrap * { box-shadow: none !important; }
-
-#msg-input { flex: 1 !important; border: none !important; background: transparent !important; box-shadow: none !important; min-width: 0 !important; }
-#msg-input * { background: transparent !important; border: none !important; box-shadow: none !important; }
-#msg-input label { display: none !important; }
-#msg-input textarea {
-  font-family: inherit !important; font-size: 15px !important;
-  height: 48px !important; border: none !important; border-radius: 0 !important;
-  background: transparent !important; padding: 12px 4px !important;
-  resize: none !important; box-shadow: none !important; width: 100% !important;
-  line-height: 24px !important; outline: none !important; color: var(--text-strong) !important;
-}
-
-/* ── Upload button (in composer) ────────────────────── */
-#upload-btn {
-  flex-shrink: 0 !important; background: transparent !important;
-  border: none !important; color: rgba(0,0,0,0.35) !important;
-  font-size: 18px !important; font-weight: 300 !important; cursor: pointer !important;
-  width: 32px !important; height: 32px !important; min-width: 32px !important;
-  display: flex !important; align-items: center !important; justify-content: center !important;
-  padding: 0 !important; margin: 0 !important;
-}
-#upload-btn:hover { color: var(--text-base) !important; }
-#upload-btn button, #upload-btn .gr-button {
-  background: transparent !important; border: none !important; color: inherit !important;
-  font-size: 18px !important; font-weight: 300 !important; padding: 0 !important;
-  margin: 0 !important; box-shadow: none !important; line-height: 1 !important;
-}
-
-/* ── Send button ────────────────────────────────────── */
-#send-btn {
-  flex-shrink: 0 !important; background: rgba(0,0,0,0.85) !important;
-  color: #fff !important; border: none !important; border-radius: 24px !important;
-  padding: 8px 18px !important; font-size: 13px !important; font-weight: 500 !important;
-  cursor: pointer !important; box-shadow: none !important; margin: 0 !important; line-height: 1.3 !important;
-}
-#send-btn:hover { background: #000 !important; }
-#send-btn button, #send-btn .gr-button {
-  background: transparent !important; color: #fff !important; border: none !important;
-  font-size: 13px !important; font-weight: 500 !important; padding: 0 !important; box-shadow: none !important;
-}
-
-/* ── Global button overrides ────────────────────────── */
-button, .gr-button { font-family: inherit !important; box-shadow: none !important; }
-.gr-button-primary { background: rgba(0,0,0,0.85) !important; color: #fff !important; border: none !important; }
-.gr-button-secondary { background: transparent !important; color: var(--text-base) !important; border: 1px solid var(--border-light) !important; }
-
-/* ── Scrollbar ──────────────────────────────────────── */
-::-webkit-scrollbar { width: 5px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.25); }
-"""
 
 # ── helpers ─────────────────────────────────────────────
 
@@ -208,44 +35,49 @@ def _build_course_choices():
     return ["全部"] + courses
 
 
+def _build_guide() -> str:
+    """返回新用户引导消息。"""
+    return """## 🎓 大学课程学习助手
+
+> 📚 上传课程资料，AI 帮你总结、出题、答疑 — 所有回答基于你的课件
+
+---
+
+### 🚀 三步开始
+
+| 步骤 | 操作 | 说明 |
+|------|------|------|
+| **①** | 输入课程名 → 点击 **「创建」** | 例如：数据结构、计算机网络 |
+| **②** | 点击 **「上传 PDF/PPT」** | 上传教材、课件、讲义 |
+| **③** | 在底部输入框提问 | 例如："总结第一章"、"出5道选择题" |
+
+> 💡 **提示**：所有回答都基于你的课件，不会凭空编造。支持 PDF、PPT、PPTX 格式。
+"""
+
+
 def _build_welcome(course: str | None) -> str:
-    """Generate ChatGPT-style welcome with clickable example prompts."""
+    """生成切换课程后的欢迎消息。"""
     if not course or course == "全部":
-        examples = [
-            "总结一下课程的主要内容",
-            "出5道选择题测试我的理解",
-            "解释一下课程的核心概念",
-            "查看我的薄弱点",
-        ]
-        items = "\n".join(
-            f'<div class="example-item" onclick="var t=document.querySelector(\'#msg-input textarea\');if(t){{t.value=\'{ex}\';t.dispatchEvent(new Event(\'input\',{{bubbles:true}}));t.focus();}}">{ex}</div>'
-            for ex in examples
-        )
-        return (
-            '<div style="text-align:center;">'
-            '<div style="font-size:18px;font-weight:500;color:rgba(0,0,0,0.8);margin-bottom:6px;">今天想学什么？</div>'
-            '<div style="font-size:14px;color:rgba(0,0,0,0.35);margin-bottom:24px;">选择示例问题或直接输入你想了解的内容</div>'
-            + items +
-            '</div>'
-        )
+        return _build_guide()
 
     from ingestion.indexer import list_sections
     sources = list_sources(course)
     sections = list_sections(course)
     memory = get_summary(course)
 
-    lines = [f"{course}"]
+    lines = [f"📌 已切换到课程「{course}」\n\n## {course}\n"]
     lines.append(f"已上传 {len(sources)} 个文件。")
 
     if sections:
-        lines.append("\n检测到的章节：")
+        lines.append("\n**检测到的章节：**")
         for s in sections:
-            learned = " ✓" if s in memory.get("chapters_learned", []) else ""
-            lines.append(f"  {s}{learned}")
+            learned = " [已完成]" if s in memory.get("chapters_learned", []) else ""
+            lines.append(f"- {s}{learned}")
 
     if memory.get("weak_count", 0) > 0:
-        lines.append(f"\n{memory['weak_count']} 个薄弱知识点待加强。")
+        lines.append(f"\n**注意：** {memory['weak_count']} 个薄弱知识点待加强。")
 
+    lines.append('\n**提示：** 你可以直接说："总结第二章" / "出5道选择" / "解释关键概念"')
     return "\n".join(lines)
 
 
@@ -253,7 +85,7 @@ def _format_sources_detail(docs, metas, scores) -> str:
     """生成折叠的检索来源 HTML details/summary。"""
     if not docs:
         return ""
-    lines = ["\n<details>\n<summary>📎 检索来源 ({n}个片段)</summary>\n".format(n=len(docs))]
+    lines = ["\n<details>\n<summary>检索来源 ({n}个片段)</summary>\n".format(n=len(docs))]
     for i, (doc, meta, score) in enumerate(zip(docs, metas, scores)):
         src = meta.get("source", "?")
         page = meta.get("page", 0)
@@ -307,6 +139,16 @@ def _course_count(course):
     return stats.get(course, 0)
 
 
+def _build_file_choices(course):
+    """返回课程的文件列表（供文件管理下拉使用）。"""
+    if not course or course == "全部":
+        return []
+    try:
+        return list_sources(course)
+    except Exception:
+        return []
+
+
 # ── chat callbacks ──────────────────────────────────────
 
 def send_message(message, chat_history, chat_course):
@@ -324,7 +166,7 @@ def send_message(message, chat_history, chat_course):
 
     # ── help ──
     if intent["intent"] == "help":
-        reply = """## 📚 使用帮助
+        reply = """## 使用帮助
 
 **直接说话就行，无需命令格式：**
 - "总结第二章" → 生成章节总结
@@ -347,7 +189,7 @@ def send_message(message, chat_history, chat_course):
         if not records:
             reply = "暂无学习记录。"
         else:
-            lines = [f"## 📝 学习记录 ({target or '全部课程'})\n"]
+            lines = [f"## 学习记录 ({target or '全部课程'})\n"]
             for r in records:
                 ts = r["timestamp"][:19].replace("T", " ")
                 c = r.get("course", "")
@@ -367,7 +209,7 @@ def send_message(message, chat_history, chat_course):
             reply = "请说明要标记哪个知识点，例如：\"标记死锁为薄弱点\""
         else:
             mark_mastery(course_name, concept, level)
-            level_label = {"mastered": "✅ 已掌握", "weak": "⚠️ 薄弱点", "unmarked": "▸ 未标记"}
+            level_label = {"mastered": "[已完成] 已掌握", "weak": "[注意] 薄弱点", "unmarked": "-- 未标记"}
             reply = f"已将「{concept}」标记为：{level_label.get(level, level)}"
         chat_history.append({"role": "user", "content": message})
         chat_history.append({"role": "assistant", "content": reply})
@@ -380,7 +222,7 @@ def send_message(message, chat_history, chat_course):
         sources = list_sources(course_name) if course_name else []
         from ingestion.indexer import list_sections
         sections = list_sections(course_name) if course_name else []
-        lines = [f"## 📁 课程「{course_name or '全部'}」\n"]
+        lines = [f"## 课程「{course_name or '全部'}」\n"]
         if sources:
             lines.append("**文件列表：**")
             for s in sources:
@@ -392,7 +234,7 @@ def send_message(message, chat_history, chat_course):
             lines.append("\n**章节：**")
             for s in sections:
                 lines.append(f"- {s}")
-        lines.append("\n💡 上传 PDF：点击 📎 按钮")
+        lines.append("\n**提示：** 上传 PDF 请点击上传按钮")
         reply = "\n".join(lines)
         chat_history.append({"role": "user", "content": message})
         chat_history.append({"role": "assistant", "content": reply})
@@ -403,11 +245,17 @@ def send_message(message, chat_history, chat_course):
     if intent["intent"] == "chapter_summary":
         chapter = intent.get("chapter") or message
         if not course_name:
-            reply = "请先在顶部选择一个课程。"
+            reply = "📌 请先在顶部下拉菜单选择课程，或输入课程名点击「创建」"
         else:
             reply = generate_chapter_summary(course_name, chapter)
             if "未在课程" not in reply:
                 record_chapter(course_name, chapter)
+            # Add source citations
+            c_docs, c_metas, c_scores = search(
+                f"{chapter} 主要内容", course=course_name, top_k=5
+            )
+            if c_docs:
+                reply += _format_sources_detail(c_docs, c_metas, c_scores)
         chat_history.append({"role": "user", "content": message})
         chat_history.append({"role": "assistant", "content": reply})
         _save_qa_record(message, reply, course_name, msg_type="chapter")
@@ -417,7 +265,7 @@ def send_message(message, chat_history, chat_course):
     # ── exam ──
     if intent["intent"] == "exam":
         if not course_name:
-            reply = "请先在顶部选择一个课程。"
+            reply = "📌 请先在顶部下拉菜单选择课程，或输入课程名点击「创建」"
         else:
             chapter = intent.get("chapter") or ""
             qtype = intent.get("question_type") or "mixed"
@@ -426,6 +274,12 @@ def send_message(message, chat_history, chat_course):
                                             question_type=qtype, count=count)
             if chapter and "未在课程" not in reply:
                 record_chapter(course_name, chapter)
+            # Add source citations
+            e_docs, e_metas, e_scores = search(
+                f"{chapter or '重点'} 知识点 考点", course=course_name, top_k=5
+            )
+            if e_docs:
+                reply += _format_sources_detail(e_docs, e_metas, e_scores)
         chat_history.append({"role": "user", "content": message})
         chat_history.append({"role": "assistant", "content": reply})
         _save_qa_record(message, reply, course_name, msg_type="exam")
@@ -436,9 +290,15 @@ def send_message(message, chat_history, chat_course):
     if intent["intent"] == "explain":
         concept = intent.get("concept") or message
         if not course_name:
-            reply = "请先在顶部选择一个课程。"
+            reply = "📌 请先在顶部下拉菜单选择课程，或输入课程名点击「创建」"
         else:
             reply = explain_concept(course_name, concept)
+            # Add source citations
+            x_docs, x_metas, x_scores = search(
+                concept, course=course_name, top_k=5
+            )
+            if x_docs:
+                reply += _format_sources_detail(x_docs, x_metas, x_scores)
         chat_history.append({"role": "user", "content": message})
         chat_history.append({"role": "assistant", "content": reply})
         _save_qa_record(message, reply, course_name, msg_type="explain")
@@ -546,9 +406,22 @@ def upload_files_handler(files, course):
             if temp_dir and os.path.isdir(temp_dir):
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
-    msg = f"入库完成: {success_count}/{len(files)} 个文件, {total_chunks} 个 chunk"
+    if success_count > 0:
+        if success_count == 1:
+            msg = f"✅ 学习完成！已解析 {total_chunks} 个知识点，现在可以提问了"
+        else:
+            msg = f"✅ 学习完成！已解析 {success_count} 个文件、{total_chunks} 个知识点，现在可以提问了"
+    else:
+        msg = ""
+
     if errors:
-        msg += f"\n⚠️ {len(errors)} 个失败: " + "; ".join(errors)
+        if msg:
+            msg += f"\n\n⚠️ {len(errors)} 个文件处理失败: " + "; ".join(errors)
+        else:
+            msg = "❌ 文件处理失败，请检查文件格式: " + "; ".join(errors)
+
+    if not msg:
+        msg = "❌ 文件处理失败，请检查文件格式"
 
     return msg, gr.update(choices=_build_course_choices())
 
@@ -562,207 +435,149 @@ def delete_course_handler(course):
 
 # ── UI ──────────────────────────────────────────────────
 
-# =============================================================
-#  UI — ChatGPT Workspace Layout
-# =============================================================
+with gr.Blocks(title="大学课程学习助手") as demo:
+    gr.Markdown("# 大学课程学习助手")
 
-with gr.Blocks(title="Echo") as demo:
-
-    # ── Sidebar (240px, course list only) ──────────────
-
-    with gr.Column(elem_classes=["sidebar"]):
-        gr.HTML(
-            '<div style="font-size:14px;font-weight:600;color:rgba(0,0,0,0.85);'
-            'padding:4px 0;margin-bottom:20px;">Echo</div>'
+    # ── Top toolbar ──
+    with gr.Row():
+        course_dd = gr.Dropdown(
+            label="当前课程",
+            choices=["全部"],
+            value="全部",
+            scale=3,
+            interactive=True,
         )
-        gr.HTML("""
-        <div id="course-menu" style="position:fixed;z-index:9999;background:#fff;border:1px solid rgba(0,0,0,0.12);border-radius:8px;padding:4px;box-shadow:0 4px 16px rgba(0,0,0,0.08);display:none;min-width:160px;">
-          <div class="menu-item" style="padding:6px 12px;font-size:13px;color:rgba(0,0,0,0.55);border-radius:4px;cursor:pointer;" onmouseover="this.style.background='rgba(0,0,0,0.04)'" onmouseout="this.style.background='transparent'">上传文件</div>
-          <div class="menu-item" style="padding:6px 12px;font-size:13px;color:rgba(0,0,0,0.55);border-radius:4px;cursor:pointer;" onmouseover="this.style.background='rgba(0,0,0,0.04)'" onmouseout="this.style.background='transparent'">重命名</div>
-          <div style="height:1px;background:rgba(0,0,0,0.06);margin:2px 0;"></div>
-          <div class="menu-item danger" style="padding:6px 12px;font-size:13px;color:rgba(220,38,38,0.85);border-radius:4px;cursor:pointer;" onmouseover="this.style.background='rgba(0,0,0,0.04)'" onmouseout="this.style.background='transparent'">删除课程</div>
-        </div>
-        <script>
-        (function() {
-          var menu = document.getElementById('course-menu');
-          document.addEventListener('contextmenu', function(e) {
-            var label = e.target.closest('label');
-            if (!label || !label.closest('#course-list')) return;
-            e.preventDefault();
-            menu.style.display = 'block';
-            menu.style.left = e.clientX + 'px';
-            menu.style.top = e.clientY + 'px';
-          });
-          document.addEventListener('click', function() {
-            menu.style.display = 'none';
-          });
-        })();
-        </script>
-        """)
+        new_course_tb = gr.Textbox(
+            label="新建课程",
+            placeholder="输入课程名...",
+            scale=2,
+        )
+        create_btn = gr.Button("创建", scale=1)
+        upload_btn = gr.UploadButton(
+            "上传 PDF/PPT",
+            file_types=[".pdf", ".pptx", ".ppt"],
+            file_count="multiple",
+            scale=1,
+        )
+        delete_btn = gr.Button("删除课程", variant="stop", scale=1)
 
-        course_radio = gr.Radio(
-            label="课程",
+    # ── File management ──
+    with gr.Row() as file_mgmt_row:
+        file_dd = gr.Dropdown(
+            label="课程文件",
             choices=[],
             value=None,
+            scale=4,
             interactive=True,
-            elem_id="course-list",
         )
+        file_delete_btn = gr.Button("删除选中文件", variant="stop", scale=1)
 
-        # New course: inline expand
-        new_course_link = gr.Button(
-            "+ 新建课程", variant="secondary", size="sm",
-            visible=True,
+    top_msg = gr.Markdown("")
+
+    # ── Chat area ──
+    chatbot = gr.Chatbot(label="对话", height=500)
+
+    with gr.Row():
+        msg_input = gr.Textbox(
+            label="输入你的问题",
+            placeholder="直接说人话，比如：总结第二章 / 出5道选择 / 解释死锁...",
+            scale=5,
         )
-        with gr.Row(visible=False) as new_course_row:
-            new_course_tb = gr.Textbox(
-                placeholder="课程名称",
-                scale=1,
-                show_label=False,
-            )
-            cancel_new_btn = gr.Button("取消", size="sm", scale=0)
-            confirm_new_btn = gr.Button("创建", variant="primary", size="sm", scale=0)
+        send_btn = gr.Button("发送", variant="primary", scale=1)
 
-        delete_btn = gr.Button("删除课程", variant="secondary", size="sm", visible=False)
+    # ── Quick buttons ──
+    with gr.Row():
+        quick_exam_btn = gr.Button("出题练习", size="sm")
+        quick_weak_btn = gr.Button("薄弱点", size="sm")
+        clear_btn = gr.Button("清空对话", size="sm")
 
-    # ── Main area ─────────────────────────────────────
-
-    with gr.Column(elem_classes=["main-area"]):
-        chatbot = gr.Chatbot(
-            label="",
-            height="100%",
-            elem_classes=["chatbot"],
-            show_label=False,
-            value=[],
-        )
-
-        with gr.Row(elem_classes=["composer-wrap"]):
-            upload_btn = gr.UploadButton(
-                "+",
-                file_types=[".pdf", ".pptx", ".ppt"],
-                file_count="multiple",
-                variant="secondary",
-                elem_id="upload-btn",
-                size="sm",
-            )
-            msg_input = gr.Textbox(
-                label="",
-                placeholder="输入你的问题...",
-                scale=1,
-                elem_id="msg-input",
-            )
-            send_btn = gr.Button("发送", variant="primary", elem_id="send-btn")
-
-    # ── State ─────────────────────────────────────────
-
+    # ── State ──
     current_course_state = gr.State("全部")
 
-    # ── Events ─────────────────────────────────────────
+    # ── Events ──
 
     def _on_load():
         choices = _build_course_choices()
-        welcome = _build_welcome(None)
-        return (
-            gr.update(choices=choices, value=None),
-            [{"role": "assistant", "content": welcome}],
-        )
+        return gr.update(choices=choices, value="全部"), _build_guide(), gr.update(choices=[], value=None)
 
-    demo.load(fn=_on_load, outputs=[course_radio, chatbot])
-
-    # Course selection
-    def _on_course_select(course):
-        if course is None:
-            course = "全部"
-        if course == "全部":
-            welcome = _build_welcome(None)
-            return [{"role": "assistant", "content": welcome}], course
-        else:
-            info = _build_welcome(course)
-            return [{"role": "assistant", "content": info}], course
-
-    course_radio.change(
-        fn=_on_course_select,
-        inputs=[course_radio],
-        outputs=[chatbot, current_course_state],
-    )
-
-    def _toggle_delete_btn(course):
-        return gr.update(visible=course is not None and course != "全部")
-
-    course_radio.change(
-        fn=_toggle_delete_btn,
-        inputs=[course_radio],
-        outputs=[delete_btn],
-    )
-
-    # New course: show/hide inline input
-    def _show_new_course():
-        return gr.update(visible=False), gr.update(visible=True), ""
-
-    new_course_link.click(
-        fn=_show_new_course,
-        outputs=[new_course_link, new_course_row, new_course_tb],
-    )
-
-    def _cancel_new_course():
-        return gr.update(visible=True), gr.update(visible=False), ""
-
-    cancel_new_btn.click(
-        fn=_cancel_new_course,
-        outputs=[new_course_link, new_course_row, new_course_tb],
-    )
+    demo.load(fn=_on_load, outputs=[course_dd, top_msg, file_dd])
 
     def _create_course(name):
-        name = (name or "").strip()
-        if not name or name == "全部":
-            return gr.update(visible=True), gr.update(visible=False), "", gr.update()
+        name = name.strip()
+        empty_files = gr.update(choices=[], value=None)
+        if not name:
+            return gr.update(), gr.update(choices=_build_course_choices()), "请输入课程名称", empty_files, "全部"
+        if name == "全部":
+            return gr.update(), gr.update(choices=_build_course_choices()), "课程名不能为'全部'", empty_files, "全部"
         if name in list_courses():
-            return gr.update(visible=True), gr.update(visible=False), "", gr.update(choices=_build_course_choices(), value=name)
+            return gr.update(), gr.update(choices=_build_course_choices()), f"课程「{name}」已存在", empty_files, "全部"
         choices = _build_course_choices()
         if name not in choices:
             choices.append(name)
-        return gr.update(visible=True), gr.update(visible=False), "", gr.update(choices=choices, value=name)
+        return "", gr.update(choices=choices, value=name), f"课程「{name}」已创建，请上传资料", empty_files, name
 
-    confirm_new_btn.click(
+    create_btn.click(
         fn=_create_course,
         inputs=[new_course_tb],
-        outputs=[new_course_link, new_course_row, new_course_tb, course_radio],
+        outputs=[new_course_tb, course_dd, top_msg, file_dd, current_course_state],
     )
 
-    new_course_tb.submit(
-        fn=_create_course,
-        inputs=[new_course_tb],
-        outputs=[new_course_link, new_course_row, new_course_tb, course_radio],
+    def _on_course_change(course):
+        welcome = _build_welcome(course)
+        file_choices = _build_file_choices(course)
+        file_value = file_choices[0] if file_choices else None
+        return welcome, course, gr.update(choices=file_choices, value=file_value), []
+
+    course_dd.change(
+        fn=_on_course_change,
+        inputs=[course_dd],
+        outputs=[top_msg, current_course_state, file_dd, chatbot],
     )
 
-    # Upload
-    def _on_upload(files):
-        course = current_course_state.value
-        if not course or course == "全部":
-            return "请先在左侧选择一个课程，再上传文件", gr.update()
-        try:
-            msg, radio_update = upload_files_handler(files, course)
-            return msg or "上传完成", radio_update
-        except Exception as e:
-            return f"上传失败: {e}", gr.update()
+    def _on_upload(files, course):
+        msg, dd_update = upload_files_handler(files, course)
+        welcome = _build_welcome(course)
+        file_choices = _build_file_choices(course)
+        file_value = file_choices[0] if file_choices else None
+        return f"{msg}\n\n{welcome}", dd_update, gr.update(choices=file_choices, value=file_value)
 
     upload_btn.upload(
         fn=_on_upload,
-        inputs=[upload_btn],
-        outputs=[msg_input, course_radio],
+        inputs=[upload_btn, current_course_state],
+        outputs=[top_msg, course_dd, file_dd],
     )
 
-    # Delete course
     def _on_delete(course):
+        empty_files = gr.update(choices=[], value=None)
         if not course or course == "全部":
-            return gr.update(), gr.update(visible=False)
+            return "请先选择要删除的课程", gr.update(), "全部", empty_files
         msg, dd_update = delete_course_handler(course)
         welcome = _build_welcome(None)
-        return dd_update, [{"role": "assistant", "content": welcome}], gr.update(visible=False)
+        return f"{msg}\n\n{welcome}", dd_update, "全部", empty_files
 
     delete_btn.click(
         fn=_on_delete,
         inputs=[current_course_state],
-        outputs=[course_radio, chatbot, delete_btn],
+        outputs=[top_msg, course_dd, current_course_state, file_dd],
+    )
+
+    # File delete
+    def delete_file_handler(course, file):
+        if not course or course == "全部":
+            return "请先选择一个课程", gr.update()
+        if not file:
+            return "请先选择要删除的文件", gr.update()
+        delete_source(course, file)
+        new_choices = _build_file_choices(course)
+        new_value = new_choices[0] if new_choices else None
+        welcome = _build_welcome(course)
+        msg = f"已删除文件「{file}」，课程「{course}」剩余 {len(new_choices)} 个文件。\n\n{welcome}"
+        return msg, gr.update(choices=new_choices, value=new_value)
+
+    file_delete_btn.click(
+        fn=delete_file_handler,
+        inputs=[current_course_state, file_dd],
+        outputs=[top_msg, file_dd],
     )
 
     # Chat
@@ -778,13 +593,12 @@ with gr.Blocks(title="Echo") as demo:
         outputs=[chatbot, msg_input],
     )
 
+    # Quick buttons
+    quick_exam_btn.click(fn=lambda: "出5道关于", outputs=[msg_input])
+    quick_weak_btn.click(fn=lambda: "我的薄弱点有哪些", outputs=[msg_input])
+    clear_btn.click(fn=clear_chat, outputs=[chatbot, msg_input])
+
 
 if __name__ == "__main__":
     demo.queue(default_concurrency_limit=10)
-    demo.launch(
-        ssr_mode=False,
-        css=CUSTOM_CSS,
-        theme=gr.themes.Base(
-            font=gr.themes.GoogleFont("Inter"),
-        ),
-    )
+    demo.launch(ssr_mode=False)
