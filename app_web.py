@@ -65,8 +65,13 @@ def _build_welcome(course: str | None) -> str:
     sections = list_sections(course)
     memory = get_summary(course)
 
+    from storage.learning_log import get_course_stats_from_history
+    stats = get_course_stats_from_history()
+    course_stats = stats.get(course, {"total": 0})
+
     lines = [f"📌 已切换到课程「{course}」\n\n## {course}\n"]
-    lines.append(f"已上传 {len(sources)} 个文件。")
+    lines.append(f"📄 {len(sources)} 个文件 | ❓ 已提问 {course_stats.get('total', 0)} 次 | "
+                 f"📖 已学 {len(memory.get('chapters_learned', []))} 章节\n")
 
     if sections:
         lines.append("\n**检测到的章节：**")
@@ -425,7 +430,8 @@ def delete_course_handler(course):
 # ── UI ──────────────────────────────────────────────────
 
 with gr.Blocks(title="大学课程学习助手") as demo:
-    gr.Markdown("# 大学课程学习助手")
+    gr.Markdown("""# 🎓 大学课程学习助手
+> 📚 上传课程资料，AI 帮你总结、出题、答疑 — 所有回答基于你的课件""")
 
     # ── Top toolbar ──
     with gr.Row():
@@ -448,18 +454,19 @@ with gr.Blocks(title="大学课程学习助手") as demo:
             file_count="multiple",
             scale=1,
         )
-        delete_btn = gr.Button("删除课程", variant="stop", scale=1)
 
     # ── File management ──
-    with gr.Row() as file_mgmt_row:
-        file_dd = gr.Dropdown(
-            label="课程文件",
-            choices=[],
-            value=None,
-            scale=4,
-            interactive=True,
-        )
-        file_delete_btn = gr.Button("删除选中文件", variant="stop", scale=1)
+    with gr.Accordion("📂 文件管理", open=False):
+        with gr.Row():
+            file_dd = gr.Dropdown(
+                label="课程文件",
+                choices=[],
+                value=None,
+                scale=4,
+                interactive=True,
+            )
+            file_delete_btn = gr.Button("删除选中文件", variant="stop", scale=1)
+        delete_btn = gr.Button("⚠️ 删除整个课程", variant="stop", scale=1)
 
     top_msg = gr.Markdown("")
 
@@ -503,7 +510,7 @@ with gr.Blocks(title="大学课程学习助手") as demo:
         choices = _build_course_choices()
         if name not in choices:
             choices.append(name)
-        return "", gr.update(choices=choices, value=name), f"课程「{name}」已创建，请上传资料", empty_files, name
+        return "", gr.update(choices=choices, value=name), f"✅ 课程「{name}」创建成功！请上传课件开始学习 📚", empty_files, name
 
     create_btn.click(
         fn=_create_course,
@@ -583,8 +590,23 @@ with gr.Blocks(title="大学课程学习助手") as demo:
     )
 
     # Quick buttons
-    quick_exam_btn.click(fn=lambda: "出5道关于", outputs=[msg_input])
-    quick_weak_btn.click(fn=lambda: "我的薄弱点有哪些", outputs=[msg_input])
+    quick_exam_btn.click(
+        fn=lambda: "出5道选择题",
+        outputs=[msg_input],
+    ).then(
+        fn=send_message,
+        inputs=[msg_input, chatbot, current_course_state],
+        outputs=[chatbot, msg_input],
+    )
+
+    quick_weak_btn.click(
+        fn=lambda: "我的薄弱点有哪些",
+        outputs=[msg_input],
+    ).then(
+        fn=send_message,
+        inputs=[msg_input, chatbot, current_course_state],
+        outputs=[chatbot, msg_input],
+    )
     clear_btn.click(fn=clear_chat, outputs=[chatbot, msg_input])
 
 
