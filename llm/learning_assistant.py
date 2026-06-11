@@ -178,14 +178,14 @@ def generate_chapter_summary(course: str, section: str) -> str:
       Markdown 格式的章节总结
     """
     if not section.strip():
-        return "请指定要总结的章节名称。\n\n示例：`/章节 红黑树`"
+        return ("请指定要总结的章节名称。\n\n示例：`/章节 红黑树`", [], [], [], True)
 
     # 三层匹配
     source_filter, section_filter, resolve_info = _resolve_chapter_target(course, section)
 
     # Tier 1/2: 精确元数据过滤
     if source_filter or section_filter:
-        docs, metas, _ = search(
+        docs, metas, scores = search(
             section,
             course=course,
             source=source_filter,
@@ -196,10 +196,10 @@ def generate_chapter_summary(course: str, section: str) -> str:
     else:
         # Tier 3: 兜底语义搜索
         query = f"{section} 主要内容 知识点"
-        docs, metas, _ = search(query, course=course, top_k=10, enable_mmr=True)
+        docs, metas, scores = search(query, course=course, top_k=10, enable_mmr=True)
 
     if not docs:
-        return _build_notfound_hint(course, section, resolve_info)
+        return (_build_notfound_hint(course, section, resolve_info), [], [], [], False)
 
     prompt = (f"课程：{course}\n"
               f"章节：{section}\n\n"
@@ -216,7 +216,8 @@ def generate_chapter_summary(course: str, section: str) -> str:
         prompt += f"{header}\n{doc[:1500]}\n\n"
 
     prompt += f"\n请根据以上资料生成「{section}」的章节总结。"
-    return generate(prompt, docs, metas)
+    reply = generate(prompt, docs, metas)
+    return (reply, docs, metas, scores, True)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -290,7 +291,7 @@ def generate_exam_questions(
         source_filter, section_filter, resolve_info = _resolve_chapter_target(course, section)
 
         if source_filter or section_filter:
-            docs, metas, _ = search(
+            docs, metas, scores = search(
                 f"{section} 知识点 考点 重点",
                 course=course,
                 source=source_filter,
@@ -300,18 +301,17 @@ def generate_exam_questions(
             )
         else:
             query = f"{section} 知识点 考点 重点"
-            docs, metas, _ = search(query, course=course, top_k=12, enable_mmr=True)
-            resolve_info = {"available_sources": [], "available_sections": []}
+            docs, metas, scores = search(query, course=course, top_k=12, enable_mmr=True)
     else:
         query = "重点 考点 关键概念 核心知识点"
-        docs, metas, _ = search(query, course=course, top_k=12, enable_mmr=True)
+        docs, metas, scores = search(query, course=course, top_k=12, enable_mmr=True)
         resolve_info = {"available_sources": [], "available_sections": []}
 
     if not docs:
         if section:
-            return _build_notfound_hint(course, section, resolve_info)
+            return (_build_notfound_hint(course, section, resolve_info), [], [], [], False)
         return (f"课程「{course}」暂无相关资料。\n\n"
-                "请先上传该课程的 PDF 教材或课件。")
+                "请先上传该课程的 PDF 教材或课件。", [], [], [], False)
 
     type_desc = {"choice": "选择题", "truefalse": "判断题",
                  "shortanswer": "简答题", "mixed": "混合题型"}
@@ -336,7 +336,8 @@ def generate_exam_questions(
 
     prompt += (f"\n请根据以上资料生成 {count} 道{type_str}。"
                f"确保题目覆盖资料中的不同知识点。")
-    return generate(prompt, docs, metas)
+    reply = generate(prompt, docs, metas)
+    return (reply, docs, metas, scores, True)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -382,10 +383,10 @@ def explain_concept(course: str, concept: str, style: str = "通俗") -> str:
       Markdown 格式的知识点解释
     """
     if not concept.strip():
-        return "请输入要解释的知识点。\n\n示例：`请解释：红黑树的旋转操作`"
+        return ("请输入要解释的知识点。\n\n示例：`请解释：红黑树的旋转操作`", [], [], [])
 
     # 检索相关知识
-    docs, metas, _ = search(concept, course=course, top_k=8, enable_mmr=True)
+    docs, metas, scores = search(concept, course=course, top_k=8, enable_mmr=True)
 
     style_guide = {
         "通俗": "用通俗易懂的语言，多举例、多类比，像学长学姐在讲课",
@@ -408,8 +409,9 @@ def explain_concept(course: str, concept: str, style: str = "通俗") -> str:
     prompt += (f"\n请用{style_prompt}的方式解释「{concept}」。"
                f"回答末尾请注明哪些内容来自课程资料，哪些来自补充知识。")
 
-    return generate(prompt, docs if docs else ["（无资料，请基于通用知识解释）"],
+    reply = generate(prompt, docs if docs else ["（无资料，请基于通用知识解释）"],
                     metas if metas else [{}])
+    return (reply, docs, metas, scores)
 
 
 # ═══════════════════════════════════════════════════════════

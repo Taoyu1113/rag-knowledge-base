@@ -247,13 +247,9 @@ def send_message(message, chat_history, chat_course):
         if not course_name:
             reply = "📌 请先在顶部下拉菜单选择课程，或输入课程名点击「创建」"
         else:
-            reply = generate_chapter_summary(course_name, chapter)
-            if "未在课程" not in reply:
+            reply, c_docs, c_metas, c_scores, found_content = generate_chapter_summary(course_name, chapter)
+            if found_content:
                 record_chapter(course_name, chapter)
-            # Add source citations
-            c_docs, c_metas, c_scores = search(
-                f"{chapter} 主要内容", course=course_name, top_k=5
-            )
             if c_docs:
                 reply += _format_sources_detail(c_docs, c_metas, c_scores)
         chat_history.append({"role": "user", "content": message})
@@ -270,14 +266,11 @@ def send_message(message, chat_history, chat_course):
             chapter = intent.get("chapter") or ""
             qtype = intent.get("question_type") or "mixed"
             count = intent.get("count") or 5
-            reply = generate_exam_questions(course_name, section=chapter,
-                                            question_type=qtype, count=count)
-            if chapter and "未在课程" not in reply:
-                record_chapter(course_name, chapter)
-            # Add source citations
-            e_docs, e_metas, e_scores = search(
-                f"{chapter or '重点'} 知识点 考点", course=course_name, top_k=5
+            reply, e_docs, e_metas, e_scores, found_content = generate_exam_questions(
+                course_name, section=chapter, question_type=qtype, count=count
             )
+            if chapter and found_content:
+                record_chapter(course_name, chapter)
             if e_docs:
                 reply += _format_sources_detail(e_docs, e_metas, e_scores)
         chat_history.append({"role": "user", "content": message})
@@ -292,11 +285,7 @@ def send_message(message, chat_history, chat_course):
         if not course_name:
             reply = "📌 请先在顶部下拉菜单选择课程，或输入课程名点击「创建」"
         else:
-            reply = explain_concept(course_name, concept)
-            # Add source citations
-            x_docs, x_metas, x_scores = search(
-                concept, course=course_name, top_k=5
-            )
+            reply, x_docs, x_metas, x_scores = explain_concept(course_name, concept)
             if x_docs:
                 reply += _format_sources_detail(x_docs, x_metas, x_scores)
         chat_history.append({"role": "user", "content": message})
