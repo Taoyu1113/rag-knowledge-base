@@ -37,24 +37,19 @@ def _build_course_choices():
 
 def _build_guide() -> str:
     """返回新用户引导消息。"""
-    return """## 大学课程学习助手
-
-> 上传课程资料，AI 帮你总结、出题、答疑 — 所有回答基于你的课件
-
----
-
+    return """
 ### 课程即刻开始
 
-创建课程。
+上传教材。
 
-上传资料。
+提出问题。
 
-开始提问。
+获得答案。
 
-教材、课件与讲义会被整理成专属课程知识库。
+让知识触手可及，从现在开始拥有自己的知识库。
 
 
-> **须知**：每一次回答，都源自你提供的内容，而非预设答案。支持 PDF、PPT、PPTX 格式。
+> **须知**：每一次回答都基于你的课程资料，而非互联网。支持 PDF、PPT、PPTX 格式。
 """
 
 
@@ -176,13 +171,14 @@ def send_message(message, chat_history, chat_course):
     if intent["intent"] == "help":
         reply = """## 使用帮助
 
-**直接说话就行，无需命令格式：**
-- "总结第二章" → 生成章节总结
-- "出5道选择题" → 自动出题
-- "解释红黑树" → 知识点解释
-- "标记XX为薄弱点" → 掌握度标记
-- "我的薄弱点有哪些" → 查看薄弱点
-- "有哪些文件" → 查看课程文件
+**用自然语言学习。**
+* "总结第二章" → 快速掌握章节内容
+* "出5道选择题" → 即刻开始练习
+* "解释红黑树" → 理解复杂概念
+* "标记XX为薄弱点" → 记录学习重点
+* "我的薄弱点有哪些" → 回顾掌握情况
+* "有哪些文件" → 查看课程资料
+
 
 支持的文件操作：上传 PDF/PPT/PPTX，删除课程/文件。"""
         chat_history.append({"role": "user", "content": message})
@@ -452,9 +448,9 @@ def delete_course_handler(course):
 
 # ── UI ──────────────────────────────────────────────────
 
-with gr.Blocks(title="大学课程学习助手") as demo:
-    gr.Markdown("""# 大学课程学习助手
-> 上传课程资料，AI 帮你总结、出题、答疑 — 所有回答基于你的课件""")
+with gr.Blocks(title="知识，自有答案") as demo:
+    gr.Markdown("""# 知识，自有答案
+> 让课程资料真正成为知识。————学习，重新定义""")
 
     # ── Top toolbar ──
     with gr.Row():
@@ -498,8 +494,8 @@ with gr.Blocks(title="大学课程学习助手") as demo:
 
     with gr.Row():
         msg_input = gr.Textbox(
-            label="输入你的问题",
-            placeholder="直接说人话，比如：总结第二章 / 出5道选择 / 解释死锁...",
+            label="用自然语言学习",
+            placeholder="即刻开始，比如：总结第二章 / 出5道选择 / 解释死锁...",
             scale=5,
         )
         send_btn = gr.Button("发送", variant="primary", scale=1)
