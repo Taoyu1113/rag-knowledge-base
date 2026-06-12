@@ -25,6 +25,7 @@ INTENT_PROMPT = """你是学习助手的意图路由器。分析用户消息，�
 - "exam": 要求出题，如"出5道选择"、"给我出几道关于B树的判断题"
 - "explain": 要求解释概念，如"解释红黑树"、"什么是死锁"
 - "mark_mastery": 标记掌握度，如"标记死锁为薄弱点"、"进程同步我学会了"
+- "query_weak": 查询薄弱知识点，如"我的薄弱点有哪些"、"薄弱点"
 - "course_mgmt": 课程管理，如"有哪些文件"、"上传PDF"
 
 参数说明：
@@ -52,6 +53,37 @@ _SLASH_PATTERNS = [
     (r"^/(?:帮助|help|\?)$", "help"),
     (r"^/(?:历史)\s*(.*)", "history"),
 ]
+
+# ── 自然语言正则（Layer 1.5，高频指令不依赖 LLM）──
+# 格式: (pattern, intent, param_extractor)
+# param_extractor 接收 re.match 对象，返回部分 intent dict
+
+_NL_PATTERNS = [
+    # 标记薄弱点: "标记死锁为薄弱点" / "把XX标记为薄弱点"
+    (r"^(?:把\s*)?标记\s*(.+?)\s*为\s*(?:薄弱点|弱点|weak)\s*$",
+     "mark_mastery", lambda m: {"concept": m.group(1).strip(), "mastery_level": "weak"}),
+    # 标记已掌握: "标记XX为已掌握" / "XX已掌握" / "XX我学会了"
+    (r"^(?:把\s*)?标记\s*(.+?)\s*为\s*(?:已掌握|已学会|mastered)\s*$",
+     "mark_mastery", lambda m: {"concept": m.group(1).strip(), "mastery_level": "mastered"}),
+    (r"^(.+?)\s*(?:已掌握|我学会了|掌握了)\s*$",
+     "mark_mastery", lambda m: {"concept": m.group(1).strip(), "mastery_level": "mastered"}),
+    # 查询薄弱点: "我的薄弱点有哪些" / "薄弱点" / "查看薄弱点"
+    (r"^(?:我的|查看|显示)?\s*薄弱点\s*(?:有哪些|列表|是什么)?\s*$",
+     "query_weak", lambda m: {}),
+]
+
+
+def _parse_nl_command(message: str) -> dict | None:
+    """自然语言正则匹配（Layer 1.5），命中返回 intent dict，否则返回 None。"""
+    msg = message.strip()
+    for pattern, intent, extractor in _NL_PATTERNS:
+        m = re.match(pattern, msg)
+        if m:
+            result = {"intent": intent, "chapter": None, "concept": None,
+                      "question_type": None, "count": None, "mastery_level": None}
+            result.update(extractor(m))
+            return result
+    return None
 
 
 def _parse_slash_command(message: str) -> dict | None:
@@ -151,6 +183,11 @@ def route(message: str, context_prompt: str = "") -> dict:
     slash = _parse_slash_command(message)
     if slash:
         return slash
+
+    # Layer 1.5: 自然语言正则（高频指令，不依赖 LLM）
+    nl = _parse_nl_command(message)
+    if nl:
+        return nl
 
     # Layer 2: LLM 分类
     context = context_prompt or ""

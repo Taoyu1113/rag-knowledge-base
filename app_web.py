@@ -37,21 +37,24 @@ def _build_course_choices():
 
 def _build_guide() -> str:
     """返回新用户引导消息。"""
-    return """## 🎓 大学课程学习助手
+    return """## 大学课程学习助手
 
-> 📚 上传课程资料，AI 帮你总结、出题、答疑 — 所有回答基于你的课件
+> 上传课程资料，AI 帮你总结、出题、答疑 — 所有回答基于你的课件
 
 ---
 
-### 🚀 三步开始
+### 课程即刻开始
 
-| 步骤 | 操作 | 说明 |
-|------|------|------|
-| **①** | 输入课程名 → 点击 **「创建」** | 例如：数据结构、计算机网络 |
-| **②** | 点击 **「上传 PDF/PPT」** | 上传教材、课件、讲义 |
-| **③** | 在底部输入框提问 | 例如："总结第一章"、"出5道选择题" |
+创建课程。
 
-> 💡 **提示**：所有回答都基于你的课件，不会凭空编造。支持 PDF、PPT、PPTX 格式。
+上传资料。
+
+开始提问。
+
+教材、课件与讲义会被整理成专属课程知识库。
+
+
+> **须知**：每一次回答，都源自你提供的内容，而非预设答案。支持 PDF、PPT、PPTX 格式。
 """
 
 
@@ -69,9 +72,9 @@ def _build_welcome(course: str | None) -> str:
     stats = get_course_stats_from_history()
     course_stats = stats.get(course, {"total": 0})
 
-    lines = [f"📌 已切换到课程「{course}」\n\n## {course}\n"]
-    lines.append(f"📄 {len(sources)} 个文件 | ❓ 已提问 {course_stats.get('total', 0)} 次 | "
-                 f"📖 已学 {len(memory.get('chapters_learned', []))} 章节\n")
+    lines = [f"已切换到课程「{course}」\n\n## {course}\n"]
+    lines.append(f"{len(sources)} 个文件 | 已提问 {course_stats.get('total', 0)} 次 | "
+                 f"已学 {len(memory.get('chapters_learned', []))} 章节\n")
 
     if sections:
         lines.append("\n**检测到的章节：**")
@@ -222,6 +225,26 @@ def send_message(message, chat_history, chat_course):
         yield chat_history, ""
         return
 
+    # ── query_weak ──
+    if intent["intent"] == "query_weak":
+        if not course_name:
+            reply = "请先在顶部下拉菜单选择课程。"
+        else:
+            weak_list = get_weak_concepts(course_name)
+            if weak_list:
+                lines = [f"## 课程「{course_name}」的薄弱知识点\n"]
+                for i, c in enumerate(weak_list, 1):
+                    lines.append(f"{i}. {c}")
+                lines.append(f"\n共 {len(weak_list)} 个薄弱知识点需要加强。")
+                reply = "\n".join(lines)
+            else:
+                reply = f"课程「{course_name}」暂无薄弱知识点。\n\n输入\"标记XX为薄弱点\"来标记。"
+        chat_history.append({"role": "user", "content": message})
+        chat_history.append({"role": "assistant", "content": reply})
+        _save_qa_record(message, reply, course_name, msg_type="query_weak")
+        yield chat_history, ""
+        return
+
     # ── course_mgmt ──
     if intent["intent"] == "course_mgmt":
         sources = list_sources(course_name) if course_name else []
@@ -250,7 +273,7 @@ def send_message(message, chat_history, chat_course):
     if intent["intent"] == "chapter_summary":
         chapter = intent.get("chapter") or message
         if not course_name:
-            reply = "📌 请先在顶部下拉菜单选择课程，或输入课程名点击「创建」"
+            reply = "请先在顶部下拉菜单选择课程，或输入课程名点击「创建」"
         else:
             reply, c_docs, c_metas, c_scores, found_content = generate_chapter_summary(course_name, chapter)
             if found_content:
@@ -266,7 +289,7 @@ def send_message(message, chat_history, chat_course):
     # ── exam ──
     if intent["intent"] == "exam":
         if not course_name:
-            reply = "📌 请先在顶部下拉菜单选择课程，或输入课程名点击「创建」"
+            reply = "请先在顶部下拉菜单选择课程，或输入课程名点击「创建」"
         else:
             chapter = intent.get("chapter") or ""
             qtype = intent.get("question_type") or "mixed"
@@ -288,7 +311,7 @@ def send_message(message, chat_history, chat_course):
     if intent["intent"] == "explain":
         concept = intent.get("concept") or message
         if not course_name:
-            reply = "📌 请先在顶部下拉菜单选择课程，或输入课程名点击「创建」"
+            reply = "请先在顶部下拉菜单选择课程，或输入课程名点击「创建」"
         else:
             reply, x_docs, x_metas, x_scores = explain_concept(course_name, concept)
             if x_docs:
@@ -402,20 +425,20 @@ def upload_files_handler(files, course):
 
     if success_count > 0:
         if success_count == 1:
-            msg = f"✅ 学习完成！已解析 {total_chunks} 个知识点，现在可以提问了"
+            msg = f"<span style='color: #16a34a; font-weight: 600;'>学习完成！已解析 {total_chunks} 个知识点，现在可以提问了</span>"
         else:
-            msg = f"✅ 学习完成！已解析 {success_count} 个文件、{total_chunks} 个知识点，现在可以提问了"
+            msg = f"<span style='color: #16a34a; font-weight: 600;'>学习完成！已解析 {success_count} 个文件、{total_chunks} 个知识点，现在可以提问了</span>"
     else:
         msg = ""
 
     if errors:
         if msg:
-            msg += f"\n\n⚠️ {len(errors)} 个文件处理失败: " + "; ".join(errors)
+            msg += f"\n\n<span style='color: #d97706; font-weight: 500;'>{len(errors)} 个文件处理失败: " + "; ".join(errors) + "</span>"
         else:
-            msg = "❌ 文件处理失败，请检查文件格式: " + "; ".join(errors)
+            msg = "<span style='color: #dc2626; font-weight: 600;'>文件处理失败，请检查文件格式: " + "; ".join(errors) + "</span>"
 
     if not msg:
-        msg = "❌ 文件处理失败，请检查文件格式"
+        msg = "<span style='color: #dc2626; font-weight: 600;'>文件处理失败，请检查文件格式</span>"
 
     return msg, gr.update(choices=_build_course_choices())
 
@@ -430,8 +453,8 @@ def delete_course_handler(course):
 # ── UI ──────────────────────────────────────────────────
 
 with gr.Blocks(title="大学课程学习助手") as demo:
-    gr.Markdown("""# 🎓 大学课程学习助手
-> 📚 上传课程资料，AI 帮你总结、出题、答疑 — 所有回答基于你的课件""")
+    gr.Markdown("""# 大学课程学习助手
+> 上传课程资料，AI 帮你总结、出题、答疑 — 所有回答基于你的课件""")
 
     # ── Top toolbar ──
     with gr.Row():
@@ -456,7 +479,7 @@ with gr.Blocks(title="大学课程学习助手") as demo:
         )
 
     # ── File management ──
-    with gr.Accordion("📂 文件管理", open=False):
+    with gr.Accordion("文件管理", open=False):
         with gr.Row():
             file_dd = gr.Dropdown(
                 label="课程文件",
@@ -466,7 +489,7 @@ with gr.Blocks(title="大学课程学习助手") as demo:
                 interactive=True,
             )
             file_delete_btn = gr.Button("删除选中文件", variant="stop", scale=1)
-        delete_btn = gr.Button("⚠️ 删除整个课程", variant="stop", scale=1)
+        delete_btn = gr.Button("删除整个课程", variant="stop", scale=1)
 
     top_msg = gr.Markdown("")
 
@@ -510,7 +533,7 @@ with gr.Blocks(title="大学课程学习助手") as demo:
         choices = _build_course_choices()
         if name not in choices:
             choices.append(name)
-        return "", gr.update(choices=choices, value=name), f"✅ 课程「{name}」创建成功！请上传课件开始学习 📚", empty_files, name
+        return "", gr.update(choices=choices, value=name), f"<span style='color: #16a34a; font-weight: 600;'>课程「{name}」创建成功！请上传课件开始学习</span>", empty_files, name
 
     create_btn.click(
         fn=_create_course,

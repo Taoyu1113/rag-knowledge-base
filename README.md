@@ -136,7 +136,7 @@
 
 <div align="center">
 
-# ⚡ Authors
+# Authors
 
 ### Yutao · Xukaiming
 

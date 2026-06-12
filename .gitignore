@@ -8,3 +8,7 @@ __pycache__/
 rag-learning-assistant/
 .env
 database/
+.superpowers/
+*.zip
+storage/course_memory.json
+storage/data/
